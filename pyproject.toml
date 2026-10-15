@@ -1,0 +1,85 @@
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14"]
+build-backend = "uv_build"
+
+[project]
+name = "vllm-gliner"
+version = "0.1.0"
+description = "vLLM 0.31 plugins for DeBERTa GLiNER2 and GLiNER2.5"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "vllm==0.31.0",
+    "gliner2==2.1.0",
+    "huggingface-hub>=0.25",
+    "sentencepiece",
+]
+
+[dependency-groups]
+dev = [
+    "poethepoet>=0.48",
+    "pyrefly>=0.35",
+    "ruff>=0.13",
+]
+test = ["pytest>=9,<10", "httpx2>=0.1"]
+
+[project.scripts]
+vllm-gliner-prep = "forge.__main__:main"
+# Keep the command used by the gliner-haystack Compose files.
+vllm-factory-prep = "forge.__main__:main"
+
+[project.entry-points."vllm.general_plugins"]
+deberta_gliner2 = "plugins.deberta_gliner2:register"
+deberta_gliner25 = "plugins.deberta_gliner25:register"
+
+[project.entry-points."vllm.io_processor_plugins"]
+deberta_gliner2_io = "plugins.deberta_gliner2.io_processor:get_processor_cls"
+deberta_gliner25_io = "plugins.deberta_gliner25.io_processor:get_processor_cls"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = ["forge", "models", "poolers", "kernels", "plugins", "vllm_factory"]
+
+[tool.poe]
+executor.type = "simple"
+
+[tool.poe.tasks]
+lint = "ruff check forge kernels models plugins poolers vllm_factory tests"
+types = "pyrefly check"
+test = "pytest tests"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN001", "ANN003", "ANN201", "ANN202", "ANN204",
+    "CPY001", "N803", "N806", "N812",
+    "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004", "C901",
+    "FBT001", "FBT002", "ARG001", "ARG002", "PLC0415", "PLW2901",
+    "D100", "D101", "D102", "D103", "D107", "D203", "D213",
+    "S101", "S105", "S107", "S108", "SLF001",
+    "TRY004", "BLE001", "ERA001", "COM812",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.pyrefly]
+python-version = "3.12"
+preset = "strict"
+project-includes = [
+    "forge",
+    "tests",
+    "plugins/deberta_gliner2/io_processor.py",
+    "plugins/deberta_gliner25/io_processor.py",
+    "vllm_factory/io/base.py",
+    "vllm_factory/packing.py",
+    "vllm_factory/optional_deps.py",
+    "vllm_factory/pooling/vllm_adapter.py",
+]
+
+[tool.pytest]
+testpaths = ["tests"]

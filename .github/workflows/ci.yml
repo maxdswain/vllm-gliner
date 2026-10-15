@@ -1,0 +1,92 @@
+name: CPU checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build vLLM 0.31 CPU image
+        run: docker build --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.31.0-x86_64 -t vllm-gliner:cpu .
+      - name: Lint, type check, and test (CPU environment)
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace --entrypoint /bin/sh vllm-gliner:cpu -ec '
+            uv pip install -q --python /opt/venv/bin/python --group dev --group test &&
+            poe lint && poe types && poe test
+          '
+      - uses: astral-sh/setup-uv@v7
+      - name: Check plugin registration and imports
+        run: |
+          docker run --rm --entrypoint python vllm-gliner:cpu -c '
+          import importlib.metadata as m
+          assert m.version("vllm").startswith("0.31.0")
+          eps = m.entry_points(group="vllm.general_plugins")
+          assert {e.name for e in eps if e.dist.name == "vllm-gliner"} == {"deberta_gliner2", "deberta_gliner25"}
+          from plugins.deberta_gliner2 import register as r2
+          from plugins.deberta_gliner25 import register as r25
+          r2(); r25()
+          from models.deberta_v2.deberta_v2_encoder import DebertaV2EncoderModel
+          from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
+          '
+      - name: CPU inference (GLiNER2 and GLiNER2.5)
+        run: |
+          set -eu
+          for spec in 'deberta_gliner25 fastino/gliner2.5-multi-v1' 'deberta_gliner2 fastino/gliner2-large-v1'; do
+            set -- $spec
+            plugin="$1"; model="$2"
+            docker run --rm --entrypoint vllm-gliner-prep \
+              -v gliner-cache:/root/.cache/huggingface -v gliner-model:/models \
+              -e HF_HOME=/root/.cache/huggingface vllm-gliner:cpu \
+              --model "$model" --plugin "$plugin" --output /models/current --force
+            docker run -d --name gliner-smoke --shm-size 1g --entrypoint vllm \
+              -p 8000:8000 -v gliner-cache:/root/.cache/huggingface \
+              -v gliner-model:/models -e HF_HOME=/root/.cache/huggingface \
+              -e VLLM_CPU_KVCACHE_SPACE=1 vllm-gliner:cpu \
+              serve /models/current --host 0.0.0.0 --port 8000 --runner pooling \
+              --dtype float32 --max-model-len 512 \
+              --no-enable-prefix-caching --no-enable-chunked-prefill \
+              --io-processor-plugin "${plugin}_io"
+            ready=0
+            for i in $(seq 1 180); do
+              if curl -fsS http://localhost:8000/health >/dev/null; then ready=1; break; fi
+              if [ "$(docker inspect -f '{{.State.Running}}' gliner-smoke)" = false ]; then break; fi
+              sleep 5
+            done
+            if [ "$ready" -ne 1 ]; then docker logs gliner-smoke; exit 1; fi
+            uv run --only-group test python tests/smoke_cpu.py
+            docker logs --tail 20 gliner-smoke
+            docker rm -f gliner-smoke
+          done
+      - name: Logs on failure
+        if: failure()
+        run: docker logs gliner-smoke || true
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: cpu
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/vllm-gliner:latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.31.0-x86_64
+          tags: ghcr.io/${{ github.repository_owner }}/vllm-gliner:latest-cpu

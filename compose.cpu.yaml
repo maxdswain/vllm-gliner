@@ -1,0 +1,26 @@
+services:
+  gliner:
+    image: ghcr.io/maxdswain/vllm-gliner:latest-cpu
+    ports:
+      - "8000:8000"
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      VLLM_CPU_KVCACHE_SPACE: "1"
+      MODEL_ID: fastino/gliner2.5-multi-v1
+      MODEL_PLUGIN: deberta_gliner25
+      IO_PLUGIN: deberta_gliner25_io
+      DTYPE: float32
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        vllm-factory-prep --model "$$MODEL_ID" --plugin "$$MODEL_PLUGIN" --output /models/current --force &&
+        exec vllm serve /models/current
+        --host 0.0.0.0 --port 8000
+        --runner pooling --trust-remote-code --dtype "$$DTYPE"
+        --no-enable-prefix-caching --no-enable-chunked-prefill
+        --io-processor-plugin "$$IO_PLUGIN"
+
+volumes:
+  huggingface-cache:

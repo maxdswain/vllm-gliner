@@ -1,0 +1,413 @@
+"""Process GLiNER2 extraction through vLLM's IOProcessor pipeline.
+
+This provides server-side schema preprocessing and output decoding.
+
+Uses the schema-based preprocessing from deberta_gliner2.processor instead of
+the GLiNERPreprocessor/GLiNERDecoder used by other GLiNER plugins.
+
+Supports four task types: entities, classification, relations, json.
+
+Entry-point group: vllm.io_processor_plugins
+Entry-point name:  deberta_gliner2_io
+
+Request format (online POST /pooling):
+    {"data": {"text": "...", "labels": [...],
+              "schema": {...},
+              "threshold": 0.5,
+              "include_confidence": false,
+              "include_spans": false},
+     "model": "...", "task": "embed"}
+
+Schema shapes (all optional per-field thresholds fall back to request-level
+``threshold`` when omitted):
+
+    entities — list or dict:
+        ["person", "org"]
+        {"person": "Description", "org": ""}
+        {"person": {"description": "People", "threshold": 0.9}}
+
+    classifications — list of dicts:
+        [{"task": "sentiment", "labels": ["pos", "neg"],
+          "multi_label": false, "cls_threshold": 0.6}]
+
+    relations — list or dict:
+        ["works_at", "reports_to"]
+        {"works_at": {"description": "Employment", "threshold": 0.25}}
+
+    structures — dict of structure definitions:
+        {"invoice": {"fields": [
+            {"name": "date", "dtype": "str", "threshold": 0.8},
+            {"name": "memo", "threshold": 0.2}
+        ]}}
+
+Request format (offline):
+    llm.encode({"data": {"text": "...", "schema": {...}}})
+"""
+
+import logging
+import re
+import time
+from collections import OrderedDict
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+from transformers import AutoTokenizer
+from typing_extensions import override
+from vllm.config import VllmConfig
+from vllm.renderers.base import BaseRenderer
+
+from plugins.deberta_gliner2.processor import (
+    build_special_token_ids,
+    build_tokenization_cache,
+    decode_output,
+    format_results,
+    normalize_gliner2_schema,
+    preprocess,
+)
+from vllm_factory.io.base import FactoryIOProcessor, PoolingRequestOutput, PromptType, TokensPrompt
+
+logger = logging.getLogger(__name__)
+
+# Conservative subset of vLLM's LoRA adapter naming conventions; the engine
+# allows richer names but the plugin refuses anything that could collide with
+# the HTTP `model` field or log scraping (whitespace, path separators, etc.).
+_ADAPTER_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-:/]{1,128}$")
+
+
+@dataclass
+class GLiNER2Input:
+    text: str
+    schema: dict[str, object] = field(default_factory=dict)
+    threshold: float = 0.5
+    include_confidence: bool = False
+    include_spans: bool = False
+    truncate_overflow_text: bool = False
+    # Optional per-request LoRA adapter selector.  The plugin parses and
+    # validates this field for the gliner2-native request shape; the vLLM
+    # engine still drives LoRARequest selection via the HTTP `model` field
+    # (online /pooling) or the `lora_request=` kwarg on `engine.encode(...)`
+    # (offline).  The Modal `/infer` shim is expected to mirror this value
+    # into `model` before proxying to `/pooling`; offline callers resolve it
+    # through `build_lora_requests(...)` and pass the result to
+    # `LLM.encode(..., lora_request=...)`.
+    adapter: str | None = None
+
+
+class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor[GLiNER2Input]):
+    """IOProcessor for deberta_gliner2 — schema-based extraction with DeBERTa backbone.
+
+    Data flow:
+        IOProcessorRequest(data={text, schema, threshold, include_confidence, include_spans})
+        → factory_parse   → GLiNER2Input (with normalized schema)
+        → factory_pre_process → TokensPrompt (+ stash extra_kwargs and metadata)
+        → merge_pooling_params → PoolingParams(task="embed", extra_kwargs=...)
+        → engine.encode    → PoolingRequestOutput
+        → factory_post_process → dict (decoded + formatted results)
+    """
+
+    pooling_task = "embed"
+
+    @staticmethod
+    def _text_length_bucket(token_count: int) -> str:
+        if token_count <= 32:
+            return "0_32"
+        if token_count <= 128:
+            return "33_128"
+        if token_count <= 512:
+            return "129_512"
+        return "513_plus"
+
+    @staticmethod
+    def _task_shape(task_types: Sequence[str]) -> str:
+        return ",".join(task_types) if task_types else "none"
+
+    def _log_observability(self, request_meta: dict[str, object] | None) -> None:  # noqa: PLR0911
+        if not request_meta or not logger.isEnabledFor(logging.INFO):
+            return
+
+        try:
+            obs = request_meta.get("_observability")
+            if not isinstance(obs, dict):
+                return
+
+            request_started_at = obs.get("request_started_at")
+            preprocess_elapsed_ms = obs.get("preprocess_elapsed_ms")
+            schema_cache_hit = obs.get("schema_cache_hit")
+            schema_count = obs.get("schema_count")
+            text_token_count = obs.get("text_token_count")
+            text_length_bucket = obs.get("text_length_bucket")
+            task_types = obs.get("task_types")
+            request_id = obs.get("request_id", "_unknown")
+            adapter = obs.get("adapter")
+
+            if not isinstance(request_started_at, (int, float)):
+                return
+            if not isinstance(preprocess_elapsed_ms, (int, float)):
+                return
+            if not isinstance(schema_count, int):
+                return
+            if not isinstance(text_token_count, int):
+                return
+            if not isinstance(text_length_bucket, str):
+                return
+            if not isinstance(task_types, str):
+                return
+
+            total_elapsed_ms = (time.perf_counter() - request_started_at) * 1000.0
+            logger.info(
+                "GLiNER2 request complete request_id=%s preprocess_ms=%.3f total_ms=%.3f "
+                "schema_cache_hit=%s schema_count=%d text_token_count=%d text_length_bucket=%s "
+                "task_types=%s adapter=%s",
+                request_id,
+                preprocess_elapsed_ms,
+                total_elapsed_ms,
+                schema_cache_hit,
+                schema_count,
+                text_token_count,
+                text_length_bucket,
+                task_types,
+                adapter if adapter is not None else "_base",
+            )
+        except Exception:
+            try:
+                logger.exception("GLiNER2 observability logging failed")
+            except Exception:
+                return
+
+    def __init__(self, vllm_config: VllmConfig, renderer: BaseRenderer) -> None:
+        super().__init__(vllm_config, renderer)
+
+        model_id = vllm_config.model_config.model
+        self._max_model_len = getattr(vllm_config.model_config, "max_model_len", None)
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            model_id,
+            use_fast=True,
+            trust_remote_code=True,
+        )
+        self._tokenization_cache = build_tokenization_cache(self._tokenizer)
+        self._special_token_ids = build_special_token_ids(self._tokenizer)
+        self._schema_preprocess_cache: OrderedDict[str, dict[str, object]] = OrderedDict()
+
+    @staticmethod
+    def _coerce_bool(value: object, field_name: str) -> bool:
+        if isinstance(value, bool):
+            return value
+        msg = f"'{field_name}' must be a boolean"
+        raise ValueError(msg)
+
+    @staticmethod
+    def _coerce_adapter(value: object) -> str | None:
+        """Validate the optional per-request LoRA adapter selector.
+
+        Returns ``None`` when the field is absent or explicitly null.  Empty
+        strings are treated as null to keep wire-format ergonomics aligned
+        with common JSON producers (pydantic v1, gliner2 request models).
+        """
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            msg = "'adapter' must be a string or null"
+            raise ValueError(msg)
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if not _ADAPTER_NAME_RE.match(stripped):
+            msg = f"'adapter' must match ^[A-Za-z0-9_.\\-:/]{{1,128}}$ — got {value!r}"
+            raise ValueError(msg)
+        return stripped
+
+    # ------------------------------------------------------------------
+    # FactoryIOProcessor implementation
+    # ------------------------------------------------------------------
+
+    @override
+    def factory_parse(self, data: object) -> GLiNER2Input:
+        if hasattr(data, "data"):
+            data = data.data
+        elif isinstance(data, dict) and "data" in data:
+            data = data["data"]
+
+        if not isinstance(data, dict):
+            msg = "Expected request data dict"
+            raise ValueError(msg)
+
+        text = data.get("text")
+        if not isinstance(text, str) or not text.strip():
+            msg = "'text' is required"
+            raise ValueError(msg)
+
+        threshold = data.get("threshold", 0.5)
+        if not isinstance(threshold, (int, float, str)):
+            msg = "'threshold' must be a number"
+            raise ValueError(msg)
+        try:
+            threshold = float(threshold)
+        except (TypeError, ValueError) as exc:
+            msg = "'threshold' must be a number"
+            raise ValueError(msg) from exc
+        if not 0.0 <= threshold <= 1.0:
+            msg = "'threshold' must be between 0 and 1"
+            raise ValueError(msg)
+
+        include_confidence = self._coerce_bool(
+            data.get("include_confidence", False), "include_confidence",
+        )
+        include_spans = self._coerce_bool(data.get("include_spans", False), "include_spans")
+        truncate_overflow_text = self._coerce_bool(
+            data.get("truncate_overflow_text", False), "truncate_overflow_text",
+        )
+
+        adapter = self._coerce_adapter(data.get("adapter"))
+
+        raw_schema = data.get("schema")
+        labels = data.get("labels")
+
+        if raw_schema is not None:
+            schema = normalize_gliner2_schema(raw_schema)
+        elif labels is not None:
+            schema = normalize_gliner2_schema({"entities": labels})
+        else:
+            msg = "Request must include schema or labels"
+            raise ValueError(msg)
+
+        return GLiNER2Input(
+            text=text,
+            schema=schema,
+            threshold=threshold,
+            include_confidence=include_confidence,
+            include_spans=include_spans,
+            truncate_overflow_text=truncate_overflow_text,
+            adapter=adapter,
+        )
+
+    @override
+    def factory_pre_process(
+        self,
+        parsed_input: GLiNER2Input,
+        request_id: str | None,
+    ) -> PromptType | Sequence[PromptType]:
+        request_started_at = time.perf_counter()
+        result = preprocess(
+            self._tokenizer,
+            parsed_input.text,
+            parsed_input.schema,
+            max_model_len=self._max_model_len,
+            truncate_overflow_text=parsed_input.truncate_overflow_text,
+            special_token_ids=self._special_token_ids or None,
+            tokenization_cache=self._tokenization_cache,
+            schema_cache=self._schema_preprocess_cache,
+        )
+        preprocess_elapsed_ms = (time.perf_counter() - request_started_at) * 1000.0
+
+        ids_list = result["input_ids"]
+
+        gliner_data = {
+            # vLLM 0.31's CPU pooling runner may omit prompt_token_ids even
+            # when the pooler requests them; keep the special-token IDs here.
+            "input_ids": ids_list,
+            "mapped_indices": result["mapped_indices"],
+            "schema_count": result["schema_count"],
+            "special_token_ids": result["special_token_ids"],
+            "token_pooling": result["token_pooling"],
+            "schema_dict": result["schema_dict"],
+            "task_types": result["task_types"],
+            "schema_tokens_list": result["schema_tokens_list"],
+            "text_tokens": result["text_tokens"],
+            "original_text": result["original_text"],
+            "start_mapping": result["start_mapping"],
+            "end_mapping": result["end_mapping"],
+            "threshold": parsed_input.threshold,
+            "threshold_meta": result.get("threshold_meta"),
+        }
+
+        task_types = result["task_types"]
+        if not isinstance(task_types, list):
+            msg = "Invalid GLiNER2 task types"
+            raise ValueError(msg)
+
+        postprocess_meta = {
+            "schema_dict": result["schema_dict"],
+            "task_types": result["task_types"],
+            "schema_tokens_list": result["schema_tokens_list"],
+            "text_tokens": result["text_tokens"],
+            "original_text": result["original_text"],
+            "start_mapping": result["start_mapping"],
+            "end_mapping": result["end_mapping"],
+            "threshold": parsed_input.threshold,
+            "include_confidence": parsed_input.include_confidence,
+            "include_spans": parsed_input.include_spans,
+            "adapter": parsed_input.adapter,
+            "_observability": {
+                "request_id": request_id or "_offline",
+                "request_started_at": request_started_at,
+                "preprocess_elapsed_ms": preprocess_elapsed_ms,
+                "schema_cache_hit": result["schema_cache_hit"],
+                "schema_count": result["schema_count"],
+                "text_token_count": len(result["text_tokens"]),
+                "text_length_bucket": self._text_length_bucket(len(result["text_tokens"])),
+                "task_types": self._task_shape(
+                    [item for item in task_types if isinstance(item, str)]
+                ),
+                "adapter": parsed_input.adapter,
+            },
+        }
+
+        self._stash(extra_kwargs=gliner_data, request_id=request_id, meta=postprocess_meta)
+
+        return TokensPrompt(prompt_token_ids=ids_list)
+
+    @override
+    def factory_post_process(
+        self,
+        model_output: Sequence[PoolingRequestOutput],
+        request_meta: object,
+    ) -> dict[str, object]:
+        try:
+            if not model_output or not isinstance(request_meta, dict):
+                msg = (
+                    f"GLiNER2 missing output or request metadata: "
+                    f"outputs={len(model_output)}, metadata={request_meta is not None}"
+                )
+                raise RuntimeError(
+                    msg,
+                )
+
+            output = model_output[0]
+            raw = output.outputs.data
+            if raw is None:
+                msg = f"GLiNER2 pooler returned no data: {output!r}"
+                raise RuntimeError(msg)
+
+            schema = request_meta["schema_dict"]
+            task_types = request_meta["task_types"]
+            if not isinstance(schema, dict) or not isinstance(task_types, list):
+                msg = "Invalid GLiNER2 response metadata"
+                raise ValueError(msg)
+            results = decode_output(
+                raw,
+                schema=schema,
+                task_types=[task for task in task_types if isinstance(task, str)],
+            )
+
+            formatted = format_results(
+                results,
+                threshold=request_meta.get("threshold", 0.5),
+                include_confidence=request_meta.get("include_confidence", False),
+                include_spans=request_meta.get("include_spans", False),
+            )
+            # Echo the selected adapter back to the caller.  vLLM picks the
+            # actual LoRA via `request.model` (online) or the `lora_request`
+            # kwarg (offline); this field is informational but essential for
+            # cross-LoRA bench harnesses to verify routing end-to-end.
+            if isinstance(formatted, dict):
+                adapter = request_meta.get("adapter")
+                if adapter is not None:
+                    formatted.setdefault("adapter", adapter)
+            return formatted
+        finally:
+            self._log_observability(request_meta if isinstance(request_meta, dict) else None)
+
+
+def get_processor_cls() -> str:
+    """Entry-point callable for vllm.io_processor_plugins group."""
+    return "plugins.deberta_gliner2.io_processor.DeBERTaGLiNER2IOProcessor"
