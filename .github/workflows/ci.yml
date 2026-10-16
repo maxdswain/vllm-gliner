@@ -32,10 +32,10 @@ jobs:
           from models.deberta_v2.deberta_v2_encoder import DebertaV2EncoderModel
           from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
           '
-      - name: CPU inference (GLiNER2 and GLiNER2.5)
+      - name: CPU inference (GLiNER2, GLiNER2.5 and Decide)
         run: |
           set -eu
-          for spec in 'deberta_gliner25 fastino/gliner2.5-multi-v1' 'deberta_gliner2 fastino/gliner2-large-v1'; do
+          for spec in 'deberta_gliner25 fastino/gliner2.5-multi-v1' 'deberta_gliner2 fastino/gliner2-large-v1' 'deberta_gliner2 fastino/GLiNER2.5-Decide'; do
             set -- $spec
             plugin="$1"; model="$2"
             docker run --rm --entrypoint vllm-gliner-prep \
@@ -57,7 +57,11 @@ jobs:
               sleep 5
             done
             if [ "$ready" -ne 1 ]; then docker logs gliner-smoke; exit 1; fi
-            uv run --only-group test python tests/smoke_cpu.py
+            if [ "$model" = 'fastino/GLiNER2.5-Decide' ]; then
+              uv run --only-group test python tests/smoke_decide_cpu.py
+            else
+              uv run --only-group test python tests/smoke_cpu.py
+            fi
             docker logs --tail 20 gliner-smoke
             docker rm -f gliner-smoke
           done

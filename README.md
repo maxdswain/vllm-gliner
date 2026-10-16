@@ -1,6 +1,6 @@
 # Serve GLiNER2.x using vLLM
 
-Serve [GLiNER2.x](https://github.com/fastino-ai/GLiNER2) extraction models through vLLM's HTTP `/pooling` endpoint. Send text and an entity schema; get back structured matches with spans and optional confidence scores.
+Serve [GLiNER2.x](https://github.com/fastino-ai/GLiNER2) extraction and classification models through vLLM's HTTP `/pooling` endpoint. Send text and a task schema; get back structured entities or classification labels.
 
 This repository adds the DeBERTa model, pooler, and request-processing plugins to **vLLM 0.31.0**, with Docker images for NVIDIA GPUs and x86-64 based CPUs.
 
@@ -29,15 +29,7 @@ docker compose -f compose.cpu.yaml up -d
 docker compose -f compose.cpu.yaml logs -f gliner
 ```
 
-Once the logs show the server is ready, send a request (the same API works for either Compose file):
-
-```sh
-curl -fsS http://localhost:8000/pooling \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"/models/current","data":{"text":"Alice works at Acme in Paris.","schema":{"entities":{"person":"","organization":"","location":""}},"runtime":"classic","include_spans":true,"include_confidence":true}}'
-```
-
-The response's `data.entities` contains matches under `person`, `organization`, and `location` (for example, `Alice`, `Acme`, and `Paris`), each with text, character offsets, and confidence. `model` must match `/models/current` when using the provided Compose files. The first startup downloads the checkpoint from Hugging Face; the `huggingface-cache` Docker volume retains those downloads across restarts.
+Once the logs show the server is ready, try a request from [Examples](#examples). The first startup downloads the checkpoint from Hugging Face; the `huggingface-cache` Docker volume retains those downloads across restarts.
 
 ## Choose a model
 
@@ -47,8 +39,33 @@ Edit `MODEL_ID`, `MODEL_PLUGIN`, and `IO_PLUGIN` **together** in the Compose fil
 | --- | --- | --- | --- |
 | GLiNER2.5 boundary (default) | `fastino/gliner2.5-multi-v1` | `deberta_gliner25` | `deberta_gliner25_io` |
 | GLiNER2 span | `fastino/gliner2-large-v1` | `deberta_gliner2` | `deberta_gliner2_io` |
+| [GLiNER2.5 Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) (English classification) | `fastino/GLiNER2.5-Decide` | `deberta_gliner2` | `deberta_gliner2_io` |
 
-Then restart with `docker compose up -d` (GPU) or `docker compose -f compose.cpu.yaml up -d` (CPU). The `DTYPE` setting defaults to `bfloat16` on GPU and `float32` on CPU; your GPU must support the selected dtype. Both plugins accept the example's `data.text` and `data.schema` format with the `classic` runtime. The GLiNER2.5 plugin also supports `constrained_classification` and `joint_ie` runtimes with schemas appropriate to those runtimes. Request flags `include_spans` and `include_confidence` control the returned details.
+Then restart with `docker compose up -d` (GPU) or `docker compose -f compose.cpu.yaml up -d` (CPU). The `DTYPE` setting defaults to `bfloat16` on GPU and `float32` on CPU; your GPU must support the selected dtype. Both plugins accept the example's `data.text` and `data.schema` format with the `classic` runtime. The GLiNER2.5 boundary plugin also supports `constrained_classification` and `joint_ie` runtimes with schemas appropriate to those runtimes. Request flags `include_spans` and `include_confidence` control the returned details.
+
+## Examples
+
+The same `/pooling` endpoint works with either Compose file. When using Compose, set `model` to `/models/current` as shown below.
+
+### Extract entities (GLiNER2.5 boundary)
+
+```sh
+curl -fsS http://localhost:8000/pooling \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"/models/current","data":{"text":"Alice works at Acme in Paris.","schema":{"entities":{"person":"","organization":"","location":""}},"runtime":"classic","include_spans":true,"include_confidence":true}}'
+```
+
+The response's `data.entities` contains matches under `person`, `organization`, and `location` (for example, `Alice`, `Acme`, and `Paris`), each with text, character offsets, and confidence.
+
+### Classify with GLiNER2.5 Decide
+
+```sh
+curl -fsS http://localhost:8000/pooling \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"/models/current","data":{"text":"Please cancel my subscription.","schema":{"classifications":[{"task":"intent","labels":["cancel","refund","technical_support","other"]}]},"threshold":0}}'
+```
+
+The response contains `"data":{"intent":"cancel"}`. `threshold: 0` disables the optional single-label confidence cutoff; omit it to use the default threshold.
 
 ## Build an image locally
 
