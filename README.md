@@ -6,34 +6,40 @@ This repository adds the DeBERTa model, pooler, and request-processing plugins t
 
 ## Quick start
 
-Clone the repository and start **one** of the following:
+
+**NVIDIA GPU** (`bfloat16`):
 
 ```sh
-git clone https://github.com/maxdswain/vllm-gliner.git
-cd vllm-gliner
+docker pull ghcr.io/maxdswain/vllm-gliner:latest
+docker run --gpus all -p 8000:8000 \
+  --entrypoint /bin/sh ghcr.io/maxdswain/vllm-gliner:latest -ec '
+    vllm-gliner-prep --model fastino/gliner2.5-multi-v1 \
+      --plugin deberta_gliner25 --output /models/current --force &&
+    exec vllm serve /models/current --host 0.0.0.0 --port 8000 \
+      --runner pooling --trust-remote-code --dtype bfloat16 \
+      --no-enable-prefix-caching --no-enable-chunked-prefill \
+      --io-processor-plugin deberta_gliner25_io'
 ```
 
-**NVIDIA GPU** (default: GLiNER2.5, `bfloat16`):
+**CPU** (`float32`; x86-64):
 
 ```sh
-docker compose pull
-docker compose up -d
-docker compose logs -f gliner
+docker pull ghcr.io/maxdswain/vllm-gliner:latest-cpu
+docker run -p 8000:8000 \
+  --entrypoint /bin/sh ghcr.io/maxdswain/vllm-gliner:latest-cpu -ec '
+    vllm-gliner-prep --model fastino/gliner2.5-multi-v1 \
+      --plugin deberta_gliner25 --output /models/current --force &&
+    exec vllm serve /models/current --host 0.0.0.0 --port 8000 \
+      --runner pooling --trust-remote-code --dtype float32 \
+      --no-enable-prefix-caching --no-enable-chunked-prefill \
+      --io-processor-plugin deberta_gliner25_io'
 ```
 
-**CPU** (default: GLiNER2.5, `float32`):
-
-```sh
-docker compose -f compose.cpu.yaml pull
-docker compose -f compose.cpu.yaml up -d
-docker compose -f compose.cpu.yaml logs -f gliner
-```
-
-Once the logs show the server is ready, try a request from [Examples](#examples). The first startup downloads the checkpoint from Hugging Face; the `huggingface-cache` Docker volume retains those downloads across restarts.
+For a Compose deployment instead, clone this repository and use [compose.yaml](compose.yaml) (`docker compose up -d`) or [compose.cpu.yaml](compose.cpu.yaml) (`docker compose -f compose.cpu.yaml up -d`).
 
 ## Choose a model
 
-Edit `MODEL_ID`, `MODEL_PLUGIN`, and `IO_PLUGIN` **together** in the Compose file you use:
+Select the model ID, preparation plugin, and IO processor **together**. For `docker run`, change `--model`, `--plugin`, and `--io-processor-plugin` in the command above. For Compose, edit `MODEL_ID`, `MODEL_PLUGIN`, and `IO_PLUGIN` in the corresponding file:
 
 | Model | `MODEL_ID` | `MODEL_PLUGIN` | `IO_PLUGIN` |
 | --- | --- | --- | --- |
@@ -41,11 +47,11 @@ Edit `MODEL_ID`, `MODEL_PLUGIN`, and `IO_PLUGIN` **together** in the Compose fil
 | GLiNER2 span | `fastino/gliner2-large-v1` | `deberta_gliner2` | `deberta_gliner2_io` |
 | [GLiNER2.5 Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) (English classification) | `fastino/GLiNER2.5-Decide` | `deberta_gliner2` | `deberta_gliner2_io` |
 
-Then restart with `docker compose up -d` (GPU) or `docker compose -f compose.cpu.yaml up -d` (CPU). The `DTYPE` setting defaults to `bfloat16` on GPU and `float32` on CPU; your GPU must support the selected dtype. Both plugins accept the example's `data.text` and `data.schema` format with the `classic` runtime. The GLiNER2.5 boundary plugin also supports `constrained_classification` and `joint_ie` runtimes with schemas appropriate to those runtimes. Request flags `include_spans` and `include_confidence` control the returned details.
+Restart the container after changing models (or run `docker compose up -d` for GPU / `docker compose -f compose.cpu.yaml up -d` for CPU). The examples use `bfloat16` on GPU and `float32` on CPU; your GPU must support the selected dtype. Both plugins accept the example's `data.text` and `data.schema` format with the `classic` runtime. The GLiNER2.5 boundary plugin also supports `constrained_classification` and `joint_ie` runtimes with schemas appropriate to those runtimes. Request flags `include_spans` and `include_confidence` control the returned details.
 
 ## Examples
 
-The same `/pooling` endpoint works with either Compose file. When using Compose, set `model` to `/models/current` as shown below.
+The same `/pooling` endpoint works with either Docker command or Compose file. Set `model` to `/models/current` as shown below.
 
 ### Extract entities (GLiNER2.5 boundary)
 
@@ -69,9 +75,12 @@ The response contains `"data":{"intent":"cancel"}`. `threshold: 0` disables the 
 
 ## Build an image locally
 
-The Compose files use fixed GHCR image names. Tag a local build with the matching name to use it without editing Compose:
+Clone the repository and tag a local build with the name used above (and in the Compose files):
 
 ```sh
+git clone https://github.com/maxdswain/vllm-gliner.git
+cd vllm-gliner
+
 # GPU (requires an NVIDIA host to serve, but not to build):
 docker build -t ghcr.io/maxdswain/vllm-gliner:latest .
 
@@ -80,7 +89,7 @@ docker build --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.31.0-x86_64 \
   -t ghcr.io/maxdswain/vllm-gliner:latest-cpu .
 ```
 
-Run the corresponding `docker compose up -d` command from [Quick start](#quick-start). Omit the `pull` step so Compose uses your locally tagged image.
+Run the corresponding `docker run` command from [Quick start](#quick-start), omitting `docker pull` so it uses your locally tagged image. The same tags also work with the linked Compose files.
 
 ## Install without Docker
 
