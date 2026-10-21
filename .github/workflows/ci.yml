@@ -10,8 +10,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Build vLLM 0.31 CPU image
-        run: docker build --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.31.0-x86_64 -t vllm-gliner:cpu .
+      - name: Build vLLM 0.32 CPU image
+        run: docker build --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.32.0-x86_64 -t vllm-gliner:cpu .
       - name: Lint, type check, and test (CPU environment)
         run: |
           docker run --rm -v "$PWD:/workspace" -w /workspace --entrypoint /bin/sh vllm-gliner:cpu -ec '
@@ -23,9 +23,10 @@ jobs:
         run: |
           docker run --rm --entrypoint python vllm-gliner:cpu -c '
           import importlib.metadata as m
-          assert m.version("vllm").startswith("0.31.0")
+          assert m.version("vllm").startswith("0.32.0")
           eps = m.entry_points(group="vllm.general_plugins")
           assert {e.name for e in eps if e.dist.name == "vllm-gliner"} == {"deberta_gliner2", "deberta_gliner25"}
+          assert {e.name for e in m.entry_points(group="vllm.endpoint_plugins") if e.dist.name == "vllm-gliner"} == {"decide_systemone"}
           from plugins.deberta_gliner2 import register as r2
           from plugins.deberta_gliner25 import register as r25
           r2(); r25()
@@ -42,10 +43,14 @@ jobs:
               -v gliner-cache:/root/.cache/huggingface -v gliner-model:/models \
               -e HF_HOME=/root/.cache/huggingface vllm-gliner:cpu \
               --model "$model" --plugin "$plugin" --output /models/current --force
+            plugins=deberta_gliner2,deberta_gliner25,deberta_gliner2_io,deberta_gliner25_io
+            if [ "$model" = 'fastino/GLiNER2.5-Decide' ]; then
+              plugins="$plugins,decide_systemone"
+            fi
             docker run -d --name gliner-smoke --shm-size 1g --entrypoint vllm \
               -p 8000:8000 -v gliner-cache:/root/.cache/huggingface \
               -v gliner-model:/models -e HF_HOME=/root/.cache/huggingface \
-              -e VLLM_CPU_KVCACHE_SPACE=1 vllm-gliner:cpu \
+              -e VLLM_CPU_KVCACHE_SPACE=1 -e VLLM_PLUGINS="$plugins" vllm-gliner:cpu \
               serve /models/current --host 0.0.0.0 --port 8000 --runner pooling \
               --dtype float32 --max-model-len 512 \
               --no-enable-prefix-caching --no-enable-chunked-prefill \
@@ -92,5 +97,5 @@ jobs:
         with:
           context: .
           push: true
-          build-args: VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.31.0-x86_64
+          build-args: VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.32.0-x86_64
           tags: ghcr.io/${{ github.repository_owner }}/vllm-gliner:latest-cpu

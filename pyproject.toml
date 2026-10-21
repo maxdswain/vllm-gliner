@@ -5,12 +5,12 @@ build-backend = "uv_build"
 [project]
 name = "vllm-gliner"
 version = "0.1.0"
-description = "vLLM 0.31 plugins for DeBERTa GLiNER2 and GLiNER2.5"
+description = "vLLM 0.32 plugins for DeBERTa GLiNER2 and GLiNER2.5"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "vllm==0.31.0",
+    "vllm==0.32.0",
     "gliner2==2.1.0",
     "huggingface-hub>=0.25",
     "sentencepiece",
@@ -36,6 +36,10 @@ deberta_gliner25 = "plugins.deberta_gliner25:register"
 [project.entry-points."vllm.io_processor_plugins"]
 deberta_gliner2_io = "plugins.deberta_gliner2.io_processor:get_processor_cls"
 deberta_gliner25_io = "plugins.deberta_gliner25.io_processor:get_processor_cls"
+
+# Endpoint plugins are opt-in through VLLM_PLUGINS in vLLM 0.32.
+[project.entry-points."vllm.endpoint_plugins"]
+decide_systemone = "plugins.deberta_gliner2.systemone:DecideSystemOnePlugin"
 
 [tool.uv.build-backend]
 module-root = ""
@@ -74,6 +78,7 @@ project-includes = [
     "forge",
     "tests",
     "plugins/deberta_gliner2/io_processor.py",
+    "plugins/deberta_gliner2/systemone.py",
     "plugins/deberta_gliner25/io_processor.py",
     "vllm_factory/io/base.py",
     "vllm_factory/packing.py",

@@ -3,6 +3,7 @@ services:
     image: ghcr.io/maxdswain/vllm-gliner:latest-cpu
     ports:
       - "8000:8000"
+    shm_size: "1gb"
     volumes:
       - huggingface-cache:/root/.cache/huggingface
     environment:
@@ -11,6 +12,8 @@ services:
       MODEL_ID: fastino/gliner2.5-multi-v1
       MODEL_PLUGIN: deberta_gliner25
       IO_PLUGIN: deberta_gliner25_io
+      # For Decide only, also set MODEL_ID/MODEL_PLUGIN/IO_PLUGIN as in README.
+      # VLLM_PLUGINS: deberta_gliner2,deberta_gliner2_io,decide_systemone
       DTYPE: float32
     entrypoint: ["/bin/sh", "-ec"]
     command:
@@ -18,7 +21,7 @@ services:
         vllm-factory-prep --model "$$MODEL_ID" --plugin "$$MODEL_PLUGIN" --output /models/current --force &&
         exec vllm serve /models/current
         --host 0.0.0.0 --port 8000
-        --runner pooling --trust-remote-code --dtype "$$DTYPE"
+        --runner pooling --trust-remote-code --dtype "$$DTYPE" --max-model-len 512
         --no-enable-prefix-caching --no-enable-chunked-prefill
         --io-processor-plugin "$$IO_PLUGIN"
 

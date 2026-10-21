@@ -280,12 +280,12 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor[GLiNER2Input]):
             adapter=adapter,
         )
 
-    @override
-    def factory_pre_process(
+    def prepare_input(
         self,
         parsed_input: GLiNER2Input,
         request_id: str | None,
-    ) -> PromptType | Sequence[PromptType]:
+    ) -> tuple[TokensPrompt, dict[str, object], dict[str, object]]:
+        """Build a prompt and pooler metadata for HTTP or SystemOne requests."""
         request_started_at = time.perf_counter()
         result = preprocess(
             self._tokenizer,
@@ -301,7 +301,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor[GLiNER2Input]):
 
         ids_list = result["input_ids"]
 
-        gliner_data = {
+        gliner_data: dict[str, object] = {
             # vLLM 0.31's CPU pooling runner may omit prompt_token_ids even
             # when the pooler requests them; keep the special-token IDs here.
             "input_ids": ids_list,
@@ -325,7 +325,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor[GLiNER2Input]):
             msg = "Invalid GLiNER2 task types"
             raise ValueError(msg)
 
-        postprocess_meta = {
+        postprocess_meta: dict[str, object] = {
             "schema_dict": result["schema_dict"],
             "task_types": result["task_types"],
             "schema_tokens_list": result["schema_tokens_list"],
@@ -352,9 +352,17 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor[GLiNER2Input]):
             },
         }
 
-        self._stash(extra_kwargs=gliner_data, request_id=request_id, meta=postprocess_meta)
+        return TokensPrompt(prompt_token_ids=ids_list), gliner_data, postprocess_meta
 
-        return TokensPrompt(prompt_token_ids=ids_list)
+    @override
+    def factory_pre_process(
+        self,
+        parsed_input: GLiNER2Input,
+        request_id: str | None,
+    ) -> PromptType | Sequence[PromptType]:
+        prompt, extra, meta = self.prepare_input(parsed_input, request_id)
+        self._stash(extra_kwargs=extra, request_id=request_id, meta=meta)
+        return prompt
 
     @override
     def factory_post_process(

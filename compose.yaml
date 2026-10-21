@@ -3,6 +3,7 @@ services:
     image: ghcr.io/maxdswain/vllm-gliner:latest
     ports:
       - "8000:8000"
+    shm_size: "1gb"
     gpus:
       - device_ids: ["0"] # Select device IDs supported by your container GPU runtime.
     volumes:
@@ -12,6 +13,8 @@ services:
       MODEL_ID: fastino/gliner2.5-multi-v1
       MODEL_PLUGIN: deberta_gliner25
       IO_PLUGIN: deberta_gliner25_io
+      # For Decide only, also set MODEL_ID/MODEL_PLUGIN/IO_PLUGIN as in README.
+      # VLLM_PLUGINS: deberta_gliner2,deberta_gliner2_io,decide_systemone
       DTYPE: bfloat16
     entrypoint: ["/bin/sh", "-ec"]
     command:
