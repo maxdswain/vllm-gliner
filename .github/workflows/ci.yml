@@ -18,7 +18,6 @@ jobs:
             uv pip install -q --python /opt/venv/bin/python --group dev --group test &&
             poe lint && poe types && poe test
           '
-      - uses: astral-sh/setup-uv@v7
       - name: Check plugin registration and imports
         run: |
           docker run --rm --entrypoint python vllm-gliner:cpu -c '
@@ -33,50 +32,65 @@ jobs:
           from models.deberta_v2.deberta_v2_encoder import DebertaV2EncoderModel
           from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
           '
-      - name: CPU inference (GLiNER2, GLiNER2.5 and Decide)
+
+  inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {model: fastino/gliner2.5-multi-v1, plugin: deberta_gliner25}
+          - {model: fastino/gliner2-large-v1, plugin: deberta_gliner2}
+          - {model: fastino/GLiNER2.5-Decide, plugin: deberta_gliner2}
+    env:
+      MODEL_ID: ${{ matrix.model }}
+      MODEL_PLUGIN: ${{ matrix.plugin }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - name: Build vLLM 0.32 CPU image
+        run: docker build --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.32.0-x86_64 -t vllm-gliner:cpu .
+      - name: CPU inference (${{ matrix.model }})
         run: |
           set -eu
-          for spec in 'deberta_gliner25 fastino/gliner2.5-multi-v1' 'deberta_gliner2 fastino/gliner2-large-v1' 'deberta_gliner2 fastino/GLiNER2.5-Decide'; do
-            set -- $spec
-            plugin="$1"; model="$2"
-            docker run --rm --entrypoint vllm-gliner-prep \
-              -v gliner-cache:/root/.cache/huggingface -v gliner-model:/models \
-              -e HF_HOME=/root/.cache/huggingface vllm-gliner:cpu \
-              --model "$model" --plugin "$plugin" --output /models/current --force
-            plugins=deberta_gliner2,deberta_gliner25,deberta_gliner2_io,deberta_gliner25_io
-            if [ "$model" = 'fastino/GLiNER2.5-Decide' ]; then
-              plugins="$plugins,decide_systemone"
-            fi
-            docker run -d --name gliner-smoke --shm-size 1g --entrypoint vllm \
-              -p 8000:8000 -v gliner-cache:/root/.cache/huggingface \
-              -v gliner-model:/models -e HF_HOME=/root/.cache/huggingface \
-              -e VLLM_CPU_KVCACHE_SPACE=1 -e VLLM_PLUGINS="$plugins" vllm-gliner:cpu \
-              serve /models/current --host 0.0.0.0 --port 8000 --runner pooling \
-              --dtype float32 --max-model-len 512 \
-              --no-enable-prefix-caching --no-enable-chunked-prefill \
-              --io-processor-plugin "${plugin}_io"
-            ready=0
-            for i in $(seq 1 180); do
-              if curl -fsS http://localhost:8000/health >/dev/null; then ready=1; break; fi
-              if [ "$(docker inspect -f '{{.State.Running}}' gliner-smoke)" = false ]; then break; fi
-              sleep 5
-            done
-            if [ "$ready" -ne 1 ]; then docker logs gliner-smoke; exit 1; fi
-            if [ "$model" = 'fastino/GLiNER2.5-Decide' ]; then
-              uv run --only-group test python tests/smoke_decide_cpu.py
-            else
-              uv run --only-group test python tests/smoke_cpu.py
-            fi
-            docker logs --tail 20 gliner-smoke
-            docker rm -f gliner-smoke
+          docker run --rm --entrypoint vllm-gliner-prep \
+            -v gliner-cache:/root/.cache/huggingface -v gliner-model:/models \
+            -e HF_HOME=/root/.cache/huggingface vllm-gliner:cpu \
+            --model "$MODEL_ID" --plugin "$MODEL_PLUGIN" --output /models/current --force
+          plugins=deberta_gliner2,deberta_gliner25,deberta_gliner2_io,deberta_gliner25_io
+          if [ "$MODEL_ID" = 'fastino/GLiNER2.5-Decide' ]; then
+            plugins="$plugins,decide_systemone"
+          fi
+          docker run -d --name gliner-smoke --shm-size 1g --entrypoint vllm \
+            -p 8000:8000 -v gliner-cache:/root/.cache/huggingface \
+            -v gliner-model:/models -e HF_HOME=/root/.cache/huggingface \
+            -e VLLM_CPU_KVCACHE_SPACE=1 -e VLLM_PLUGINS="$plugins" vllm-gliner:cpu \
+            serve /models/current --host 0.0.0.0 --port 8000 --runner pooling \
+            --dtype float32 --max-model-len 512 \
+            --no-enable-prefix-caching --no-enable-chunked-prefill \
+            --io-processor-plugin "${MODEL_PLUGIN}_io"
+          ready=0
+          for i in $(seq 1 180); do
+            if curl -fsS -m 2 http://localhost:8000/health >/dev/null 2>&1; then ready=1; break; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' gliner-smoke)" = false ]; then break; fi
+            sleep 2
           done
+          if [ "$ready" -ne 1 ]; then docker logs gliner-smoke; exit 1; fi
+          if [ "$MODEL_ID" = 'fastino/GLiNER2.5-Decide' ]; then
+            uv run --only-group test python tests/smoke_decide_cpu.py
+          else
+            uv run --only-group test python tests/smoke_cpu.py
+          fi
+          docker logs --tail 20 gliner-smoke
+          docker rm -f gliner-smoke
       - name: Logs on failure
         if: failure()
         run: docker logs gliner-smoke || true
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: cpu
+    needs: [cpu, inference]
     runs-on: ubuntu-latest
     permissions:
       contents: read
