@@ -62,12 +62,15 @@ jobs:
           if [ "$MODEL_ID" = 'fastino/GLiNER2.5-Decide' ]; then
             plugins="$plugins,decide_systemone"
           fi
+          # Pooling is encoder-only; use bfloat16 weights and avoid reserving
+          # a 1 GiB KV cache or compiling a warmup graph on the CI runner.
           docker run -d --name gliner-smoke --shm-size 1g --entrypoint vllm \
             -p 8000:8000 -v gliner-cache:/root/.cache/huggingface \
             -v gliner-model:/models -e HF_HOME=/root/.cache/huggingface \
-            -e VLLM_CPU_KVCACHE_SPACE=1 -e VLLM_PLUGINS="$plugins" vllm-gliner:cpu \
+            -e VLLM_PLUGINS="$plugins" vllm-gliner:cpu \
             serve /models/current --host 0.0.0.0 --port 8000 --runner pooling \
-            --dtype float32 --max-model-len 512 \
+            --dtype bfloat16 --max-model-len 512 \
+            --enforce-eager --kv-cache-memory-bytes 67108864 \
             --no-enable-prefix-caching --no-enable-chunked-prefill \
             --io-processor-plugin "${MODEL_PLUGIN}_io"
           ready=0
@@ -86,7 +89,9 @@ jobs:
           docker rm -f gliner-smoke
       - name: Logs on failure
         if: failure()
-        run: docker logs gliner-smoke || true
+        run: |
+          docker inspect gliner-smoke --format 'OOMKilled={{.State.OOMKilled}} ExitCode={{.State.ExitCode}}' || true
+          docker logs gliner-smoke || true
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
