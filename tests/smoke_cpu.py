@@ -22,6 +22,10 @@ assert "data" in result, result
 assert isinstance(result["data"], dict), result
 assert "entities" in result["data"], result
 assert isinstance(result["data"]["entities"], dict), result
+usage = result["usage"]
+assert usage["prompt_tokens"] > 0, result
+assert usage["completion_tokens"] == 0, result
+assert usage["total_tokens"] == usage["prompt_tokens"], result
 entities = result["data"]["entities"]
 for label, text in (("person", "Alice"), ("organization", "Acme"), ("location", "Paris")):
     assert any(item["text"] == text for item in entities.get(label, [])), (label, result)

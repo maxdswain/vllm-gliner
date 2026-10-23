@@ -46,7 +46,7 @@ Select the model ID, preparation plugin, and IO processor **together**. For `doc
 | GLiNER2 span | `fastino/gliner2-large-v1` | `deberta_gliner2` | `deberta_gliner2_io` |
 | [GLiNER2.5 Decide](https://huggingface.co/fastino/GLiNER2.5-Decide) (English classification; `/pooling` and `/v1/systemone`) | `fastino/GLiNER2.5-Decide` | `deberta_gliner2` | `deberta_gliner2_io` |
 
-Restart the container after changing models (or run `docker compose up -d` for GPU / `docker compose -f compose.cpu.yaml up -d` for CPU). The examples use `bfloat16` on GPU and `float32` on CPU; your GPU must support the selected dtype. Both plugins accept the example's `data.text` and `data.schema` format with the `classic` runtime. The GLiNER2.5 boundary plugin also supports `constrained_classification` and `joint_ie` runtimes with schemas appropriate to those runtimes. Request flags `include_spans` and `include_confidence` control the returned details.
+Restart the container after changing models (or run `docker compose up -d` for GPU / `docker compose -f compose.cpu.yaml up -d` for CPU). The examples use `bfloat16` on GPU and `float32` on CPU; your GPU must support the selected dtype. Both plugins accept the example's `data.text` and `data.schema` format with the `classic` runtime. The GLiNER2.5 boundary plugin also supports `constrained_classification` and `joint_ie` runtimes with schemas appropriate to those runtimes. Request flags `include_spans` and `include_confidence` control the returned details. The GLiNER IO processors return top-level `usage` by default with `prompt_tokens` (encoded text and schema), `completion_tokens: 0`, and `total_tokens` (equal to `prompt_tokens`).
 
 ## Examples
 
@@ -60,7 +60,7 @@ curl -fsS http://localhost:8000/pooling \
   -d '{"model":"/models/current","data":{"text":"Alice works at Acme in Paris.","schema":{"entities":{"person":"","organization":"","location":""}},"runtime":"classic","include_spans":true,"include_confidence":true}}'
 ```
 
-The response's `data.entities` contains matches under `person`, `organization`, and `location` (for example, `Alice`, `Acme`, and `Paris`), each with text, character offsets, and confidence.
+The response's `data.entities` contains matches under `person`, `organization`, and `location` (for example, `Alice`, `Acme`, and `Paris`), each with text, character offsets, and confidence. `usage.prompt_tokens` counts the encoded input, while `usage.completion_tokens` is zero.
 
 ### Classify with GLiNER2.5 Decide using SystemOne
 
