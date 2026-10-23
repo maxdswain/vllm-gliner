@@ -16,19 +16,20 @@ import contextvars
 import threading
 import uuid
 from collections.abc import Sequence
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, cast
 
 from typing_extensions import override
 from vllm.config import VllmConfig
 from vllm.entrypoints.pooling.pooling.io_processor import PluginWithIOProcessorPlugins
 from vllm.entrypoints.pooling.pooling.protocol import IOProcessorResponse
-from vllm.entrypoints.pooling.typing import PoolingServeContext
+from vllm.entrypoints.pooling.typing import AnyPoolingRequest, PoolingServeContext
 from vllm.entrypoints.serve.engine.protocol import UsageInfo
 from vllm.inputs import PromptType, TokensPrompt
 from vllm.outputs import PoolingRequestOutput
 from vllm.plugins.io_processors.interface import IOProcessor
 from vllm.pooling_params import PoolingParams, PoolingTask
 from vllm.renderers.base import BaseRenderer
+from vllm.renderers.inputs.preprocess import prompt_to_seq
 
 # Re-exports for plugins — import from here, not from vllm.*
 __all__ = [
@@ -51,7 +52,9 @@ class GLiNERPoolingResponse(IOProcessorResponse[object]):
 _original_post_process_online = PluginWithIOProcessorPlugins.post_process_online
 
 
-def _post_process_with_usage(self: PluginWithIOProcessorPlugins, ctx: PoolingServeContext) -> None:
+def _post_process_with_usage(
+    self: PluginWithIOProcessorPlugins, ctx: PoolingServeContext[AnyPoolingRequest],
+) -> None:
     """Add usage only to responses produced by the GLiNER IO processors."""
     if not isinstance(self.io_processor, FactoryIOProcessor):
         _original_post_process_online(self, ctx)
@@ -74,7 +77,7 @@ def _post_process_with_usage(self: PluginWithIOProcessorPlugins, ctx: PoolingSer
 # vLLM 0.32 constructs its own IOProcessorResponse after calling post_process;
 # its schema has no usage field. Keep the integration here, scoped to our IO
 # processors, rather than requiring an additional endpoint plugin.
-PluginWithIOProcessorPlugins.post_process_online = _post_process_with_usage
+setattr(PluginWithIOProcessorPlugins, "post_process_online", _post_process_with_usage)  # noqa: B010
 
 
 class FactoryIOProcessor(IOProcessor[InputT, object], Generic[InputT]):
@@ -147,8 +150,11 @@ class FactoryIOProcessor(IOProcessor[InputT, object], Generic[InputT]):
         request_key = request_id or f"_offline:{uuid.uuid4().hex}"
         self._request_key.set(request_key)
         result = self.factory_pre_process(prompt, request_id)
-        prompts = result if isinstance(result, Sequence) else [result]
-        token_count = sum(len(item["prompt_token_ids"]) for item in prompts)
+        # GLiNER processors return TokensPrompt items, not text or embeddings.
+        token_count = sum(
+            len(cast("TokensPrompt", item)["prompt_token_ids"])
+            for item in prompt_to_seq(result)
+        )
         with self._extra_lock:
             self._prompt_tokens[request_key] = token_count
         return result
