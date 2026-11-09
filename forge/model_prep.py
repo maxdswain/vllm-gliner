@@ -31,7 +31,8 @@ def _config(
         "num_attention_heads": 1,
         "hidden_size": hidden,
         "encoder_model_name": extractor.get(
-            "model_name", "microsoft/mdeberta-v3-base" if boundary else "microsoft/deberta-v3-large",
+            "model_name",
+            "microsoft/mdeberta-v3-base" if boundary else "microsoft/deberta-v3-large",
         ),
         "vocab_size": vocab_size,
         "encoder_hidden_size": hidden,
@@ -125,7 +126,9 @@ def prepare_model(model_id: str, plugin: str, output_dir: str, *, force: bool = 
 
 
 def prepare_gliner2_model(
-    hf_model_id: str, output_dir: str | None = None, force: bool = False,
+    hf_model_id: str,
+    output_dir: str | None = None,
+    force: bool = False,
 ) -> str:
     return prepare_model(
         hf_model_id,
@@ -136,7 +139,9 @@ def prepare_gliner2_model(
 
 
 def prepare_gliner25_model(
-    hf_model_id: str, output_dir: str | None = None, force: bool = False,
+    hf_model_id: str,
+    output_dir: str | None = None,
+    force: bool = False,
 ) -> str:
     return prepare_model(
         hf_model_id,

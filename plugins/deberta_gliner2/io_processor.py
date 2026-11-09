@@ -250,11 +250,13 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor[GLiNER2Input]):
             raise ValueError(msg)
 
         include_confidence = self._coerce_bool(
-            data.get("include_confidence", False), "include_confidence",
+            data.get("include_confidence", False),
+            "include_confidence",
         )
         include_spans = self._coerce_bool(data.get("include_spans", False), "include_spans")
         truncate_overflow_text = self._coerce_bool(
-            data.get("truncate_overflow_text", False), "truncate_overflow_text",
+            data.get("truncate_overflow_text", False),
+            "truncate_overflow_text",
         )
 
         adapter = self._coerce_adapter(data.get("adapter"))
@@ -345,9 +347,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor[GLiNER2Input]):
                 "schema_count": result["schema_count"],
                 "text_token_count": len(result["text_tokens"]),
                 "text_length_bucket": self._text_length_bucket(len(result["text_tokens"])),
-                "task_types": self._task_shape(
-                    [item for item in task_types if isinstance(item, str)]
-                ),
+                "task_types": self._task_shape([item for item in task_types if isinstance(item, str)]),
                 "adapter": parsed_input.adapter,
             },
         }

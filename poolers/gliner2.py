@@ -22,14 +22,14 @@ def _gliner2_layers():
 # Main GLiNER2 Pooler
 # ==================================================================
 
+
 class GLiNER2Pooler(nn.Module):
     """GLiNER2 pooler: SpanRepLayer + CountLSTM + classifier + count_pred.
 
     This handles the head computation (everything after the encoder backbone).
     """
 
-    def __init__(self, hidden_size: int, max_width: int = 8,
-                 counting_layer: str = "count_lstm") -> None:
+    def __init__(self, hidden_size: int, max_width: int = 8, counting_layer: str = "count_lstm") -> None:
         super().__init__()
         layers = _gliner2_layers()
         self.hidden_size = hidden_size
@@ -38,15 +38,26 @@ class GLiNER2Pooler(nn.Module):
 
         # gliner2.layers.SpanRepLayer(hidden_size, max_width, span_mode, **kwargs)
         self.span_rep = layers.SpanRepLayer(
-            hidden_size, max_width, "markerV0", dropout=0.1,
+            hidden_size,
+            max_width,
+            "markerV0",
+            dropout=0.1,
         )
         self.classifier = layers.create_mlp(
-            input_dim=hidden_size, intermediate_dims=[hidden_size * 2],
-            output_dim=1, dropout=0., activation="relu", add_layer_norm=False,
+            input_dim=hidden_size,
+            intermediate_dims=[hidden_size * 2],
+            output_dim=1,
+            dropout=0.0,
+            activation="relu",
+            add_layer_norm=False,
         )
         self.count_pred = layers.create_mlp(
-            input_dim=hidden_size, intermediate_dims=[hidden_size * 2],
-            output_dim=20, dropout=0., activation="relu", add_layer_norm=False,
+            input_dim=hidden_size,
+            intermediate_dims=[hidden_size * 2],
+            output_dim=20,
+            dropout=0.0,
+            activation="relu",
+            add_layer_norm=False,
         )
         if counting_layer == "count_lstm":
             self.count_embed = layers.CountLSTM(hidden_size)
@@ -96,7 +107,9 @@ class GLiNER2Pooler(nn.Module):
         return {"span_rep": span_rep}
 
     def predict_spans(
-        self, token_embs: torch.Tensor, schema_embs: torch.Tensor,
+        self,
+        token_embs: torch.Tensor,
+        schema_embs: torch.Tensor,
     ) -> tuple[torch.Tensor | None, int]:
         """Predict spans for a structure/entity/relation schema.
 
@@ -160,7 +173,9 @@ class GLiNER2Pooler(nn.Module):
             sequences = split_hidden_states(hidden_states, ctx.seq_lengths)
         except Exception:
             dummy = torch.zeros(
-                4, device=hidden_states.device, dtype=hidden_states.dtype,
+                4,
+                device=hidden_states.device,
+                dtype=hidden_states.dtype,
             )
             return [dummy]
 
@@ -190,6 +205,7 @@ class GLiNER2Pooler(nn.Module):
         Returns a serialized tensor with results for all schemas.
         """
         import json
+
         device = tok_embs.device
 
         mappings = kwargs["mapped_indices"]
@@ -289,10 +305,19 @@ class GLiNER2Pooler(nn.Module):
 
                 field_names = self._extract_field_names(schema_tokens)
                 decoded = self._decode_spans(
-                    span_scores, pred_count, field_names, task_type,
-                    schema_name, text_len_actual, text_tokens,
-                    original_text, start_mapping, end_mapping,
-                    threshold, schema_dict, threshold_meta,
+                    span_scores,
+                    pred_count,
+                    field_names,
+                    task_type,
+                    schema_name,
+                    text_len_actual,
+                    text_tokens,
+                    original_text,
+                    start_mapping,
+                    end_mapping,
+                    threshold,
+                    schema_dict,
+                    threshold_meta,
                 )
                 results[schema_name] = decoded
 
@@ -301,7 +326,8 @@ class GLiNER2Pooler(nn.Module):
         result_bytes = result_json.encode("utf-8")
         result_tensor = torch.tensor(
             [float(b) for b in result_bytes],
-            device=device, dtype=torch.float32,
+            device=device,
+            dtype=torch.float32,
         )
         # Prepend length
         length = torch.tensor([float(len(result_bytes))], device=device, dtype=torch.float32)
@@ -328,9 +354,19 @@ class GLiNER2Pooler(nn.Module):
         ]
 
     def _decode_spans(
-        self, span_scores, pred_count, field_names, task_type,
-        schema_name, text_len, text_tokens, original_text,
-        start_mapping, end_mapping, threshold, schema_dict,
+        self,
+        span_scores,
+        pred_count,
+        field_names,
+        task_type,
+        schema_name,
+        text_len,
+        text_tokens,
+        original_text,
+        start_mapping,
+        end_mapping,
+        threshold,
+        schema_dict,
         threshold_meta=None,
     ) -> dict:
         """Decode span scores into structured results."""
@@ -339,23 +375,31 @@ class GLiNER2Pooler(nn.Module):
 
         if schema_name == "entities":
             entity_thresholds = threshold_meta.get("entities", {})
-            per_field = [
-                entity_thresholds.get(name) or threshold
-                for name in field_names
-            ]
+            per_field = [entity_thresholds.get(name) or threshold for name in field_names]
             return self._decode_entities(
-                span_scores, field_names, text_len, text_tokens,
-                original_text, start_mapping, end_mapping, threshold,
+                span_scores,
+                field_names,
+                text_len,
+                text_tokens,
+                original_text,
+                start_mapping,
+                end_mapping,
+                threshold,
                 per_field_thresholds=per_field,
             )
         if task_type == "relations":
-            rel_threshold = (
-                threshold_meta.get("relations", {}).get(schema_name) or threshold
-            )
+            rel_threshold = threshold_meta.get("relations", {}).get(schema_name) or threshold
             return self._decode_relations(
-                span_scores, pred_count, field_names, text_len,
-                text_tokens, original_text, start_mapping, end_mapping,
-                rel_threshold, schema_name,
+                span_scores,
+                pred_count,
+                field_names,
+                text_len,
+                text_tokens,
+                original_text,
+                start_mapping,
+                end_mapping,
+                rel_threshold,
+                schema_name,
             )
         struct_thresholds = threshold_meta.get("json_structures", {}).get(schema_name, [])
         per_field = [
@@ -363,14 +407,21 @@ class GLiNER2Pooler(nn.Module):
             for i in range(len(field_names))
         ]
         return self._decode_structures(
-            span_scores, pred_count, field_names, text_len,
-            text_tokens, original_text, start_mapping, end_mapping,
-            threshold, schema_name, schema_dict,
+            span_scores,
+            pred_count,
+            field_names,
+            text_len,
+            text_tokens,
+            original_text,
+            start_mapping,
+            end_mapping,
+            threshold,
+            schema_name,
+            schema_dict,
             per_field_thresholds=per_field,
         )
 
-    def _find_spans(self, scores, threshold, text_len, text,
-                    start_map, end_map):
+    def _find_spans(self, scores, threshold, text_len, text, start_map, end_map):
         """Find valid spans above threshold."""
         valid = torch.where(scores >= threshold)
         starts, widths = valid
@@ -402,9 +453,18 @@ class GLiNER2Pooler(nn.Module):
                 selected.append((text, conf, start, end))
         return [{"text": s[0], "confidence": s[1], "start": s[2], "end": s[3]} for s in selected]
 
-    def _decode_entities(self, span_scores, field_names, text_len,
-                         text_tokens, text, start_map, end_map, threshold,
-                         per_field_thresholds=None):
+    def _decode_entities(
+        self,
+        span_scores,
+        field_names,
+        text_len,
+        text_tokens,
+        text,
+        start_map,
+        end_map,
+        threshold,
+        per_field_thresholds=None,
+    ):
         scores = span_scores[0, :, -text_len:]
         entity_results = OrderedDict()
         for idx, name in enumerate(field_names):
@@ -413,8 +473,9 @@ class GLiNER2Pooler(nn.Module):
             entity_results[name] = self._format_spans(spans)
         return {"type": "entities", "entities": entity_results}
 
-    def _decode_relations(self, span_scores, count, field_names, text_len,
-                          text_tokens, text, start_map, end_map, threshold, schema_name):
+    def _decode_relations(
+        self, span_scores, count, field_names, text_len, text_tokens, text, start_map, end_map, threshold, schema_name
+    ):
         instances = []
         for inst in range(count):
             scores = span_scores[inst, :, -text_len:]
@@ -429,9 +490,21 @@ class GLiNER2Pooler(nn.Module):
                 instances.append(values)
         return {"type": "relations", "instances": instances}
 
-    def _decode_structures(self, span_scores, count, field_names, text_len,
-                           text_tokens, text, start_map, end_map, threshold,
-                           schema_name, schema_dict, per_field_thresholds=None):
+    def _decode_structures(
+        self,
+        span_scores,
+        count,
+        field_names,
+        text_len,
+        text_tokens,
+        text,
+        start_map,
+        end_map,
+        threshold,
+        schema_name,
+        schema_dict,
+        per_field_thresholds=None,
+    ):
         instances = []
         for inst in range(count):
             scores = span_scores[inst, :, -text_len:]

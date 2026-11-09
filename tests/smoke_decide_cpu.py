@@ -1,4 +1,4 @@
-"""Exercise Decide on CPU through both /pooling and vLLM's /v1/systemone."""
+"""Exercise Decide on CPU through /pooling and both vLLM decisions routes."""
 
 import os
 
@@ -61,3 +61,55 @@ assert 0 <= answers["cancellation"]["noul"] <= 1, result
 assert 0 <= answers["urgency"]["score"] <= 2, result
 assert result["diagnostics"]["intent"]["label_mass"] == 1.0, result
 assert result["usage"]["input_tokens"] > 0, result
+
+response = httpx2.post(
+    base_url + "/v1/decisions",
+    json={
+        "model": model,
+        "input": "Please cancel my subscription.",
+        "questions": [
+            {
+                "type": "choice",
+                "name": "intent",
+                "instructions": "What does the customer want?",
+                "choices": [
+                    {"value": "cancel", "description": "Cancel a subscription"},
+                    {"value": "refund"},
+                    {"value": "technical_support"},
+                    {"value": "other"},
+                ],
+            },
+            {
+                "type": "predicate",
+                "name": "cancellation",
+                "instructions": "Does the customer want to cancel?",
+            },
+            {
+                "type": "score",
+                "name": "urgency",
+                "instructions": "How urgent is this request?",
+                "levels": [{"label": label} for label in ("low", "medium", "high")],
+            },
+        ],
+    },
+    timeout=180,
+)
+response.raise_for_status()
+result = response.json()
+assert len(result["answers"]) == 3, result
+choice, predicate, score = result["answers"]
+assert choice["type"] == "choice", result
+assert choice["name"] == "intent", result
+assert choice["choice"] == "cancel", result
+assert [entry["value"] for entry in choice["probabilities"]] == [
+    "cancel",
+    "refund",
+    "technical_support",
+    "other",
+], result
+assert 0 <= predicate["probability"] <= 1, result
+assert predicate["name"] == "cancellation", result
+assert 0 <= score["score"] <= 2, result
+assert score["name"] == "urgency", result
+assert result["usage"]["input_tokens"] > 0, result
+assert result["usage"]["output_tokens"] == 0, result

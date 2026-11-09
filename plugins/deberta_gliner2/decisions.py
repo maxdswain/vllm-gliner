@@ -1,9 +1,7 @@
-"""vLLM 0.32 SystemOne reads for the English GLiNER2.5 Decide checkpoint.
+"""OpenAI Decisions and SystemOne reads for the English GLiNER2.5 Decide checkpoint.
 
-vLLM only creates a native SystemOne handler for built-in read strategies. Its
-endpoint-plugin hook runs after that handler is initialized, allowing this
-explicitly allowlisted plugin to install a Decide strategy on the existing
-route without shadowing the route or changing vLLM's global strategy registry.
+The endpoint hook installs a read strategy on both built-in vLLM routes after
+vLLM initializes its handlers, without modifying the global strategy registry.
 """
 
 from argparse import Namespace
@@ -14,13 +12,14 @@ from fastapi import FastAPI
 from starlette.datastructures import State
 from typing_extensions import override
 from vllm.engine.protocol import EngineClient
-from vllm.entrypoints.generate.structured_decisions.question_types import (
+from vllm.entrypoints.generate.structured_decisions.serving import ServingStructuredDecisions
+from vllm.entrypoints.openai.decisions.question_types import (
     Question,
     StructuredDecisionError,
     label_softmax,
 )
-from vllm.entrypoints.generate.structured_decisions.serving import ServingStructuredDecisions
-from vllm.entrypoints.generate.structured_decisions.strategies import (
+from vllm.entrypoints.openai.decisions.serving import OpenAIServingDecisions
+from vllm.entrypoints.openai.decisions.strategies import (
     DecisionLimits,
     QuestionRead,
     ReadContext,
@@ -55,9 +54,9 @@ class DecideReadStrategy(ReadStrategy):
         return DecisionLimits(max_questions=64, max_options=26)
 
     @override
-    def num_requests(self, questions: list[Question]) -> int:
+    def num_requests(self, questions: list[Question], joint: bool = False) -> int:
         """Batch all questions into one GLiNER2 schema and engine request."""
-        del questions
+        del questions, joint
         return 1
 
     @override
@@ -84,9 +83,7 @@ class DecideReadStrategy(ReadStrategy):
         result_keys: list[str] = []
         for question in questions:
             descriptions = {
-                option.name: option.description
-                for option in question.options
-                if option.description is not None
+                option.name: option.description for option in question.options if option.description is not None
             }
             prompt = "\n".join(part for part in (instructions, question.instructions) if part)
             result_keys.append(f"{question.id}: {prompt}" if prompt else question.id)
@@ -133,26 +130,35 @@ class DecideReadStrategy(ReadStrategy):
         ]
 
 
-class DecideSystemOnePlugin:
-    """Opt-in SystemOne handler for the exact English Decide checkpoint."""
+class DecideEndpointPlugin:
+    """Opt-in Decisions and SystemOne handlers for the English Decide checkpoint."""
 
     name = "decide_systemone"
     required_tasks: tuple[SupportedTask, ...] | None = ("embed",)
 
     def attach_router(self, app: FastAPI) -> None:
-        """Use vLLM's existing /v1/systemone route and response protocol."""
+        """Use vLLM's existing /v1/decisions and /v1/systemone routes."""
         del app
 
     async def init_state(
-        self, engine_client: EngineClient | None, state: State, args: Namespace,
+        self,
+        engine_client: EngineClient | None,
+        state: State,
+        args: Namespace,
     ) -> None:
         """Install the Decide strategy after vLLM initializes its handlers."""
         if engine_client is None:
             return
         config = engine_client.model_config
-        if config.architecture != "GLiNER2VLLMModel" or getattr(
-            config.hf_config, "_source_model", None,
-        ) != DECIDE_MODEL_ID:
+        if (
+            config.architecture != "GLiNER2VLLMModel"
+            or getattr(
+                config.hf_config,
+                "_source_model",
+                None,
+            )
+            != DECIDE_MODEL_ID
+        ):
             return
         strategy = DecideReadStrategy(
             ReadContext(
@@ -164,6 +170,10 @@ class DecideSystemOnePlugin:
             ),
         )
         state.serving_structured_decisions = ServingStructuredDecisions(
+            state.openai_serving_models,
+            strategy,
+        )
+        state.openai_serving_decisions = OpenAIServingDecisions(
             state.openai_serving_models,
             strategy,
         )

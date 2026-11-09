@@ -48,7 +48,8 @@ def _group_key(extra: dict[str, object]) -> tuple[object, ...]:
 
 
 def _sequence_groups(
-    ctx: PoolerContext, extras: list[dict[str, object]],
+    ctx: PoolerContext,
+    extras: list[dict[str, object]],
 ) -> list[list[int]]:
     """Group sequence indexes that can share one GLiNER2 call.
 
@@ -249,15 +250,30 @@ class GLiNER25BoundaryPooler(nn.Module):
         schemas = [extra["schema"] for extra in extras]
         if runtime == "classic":
             return self._run_classic(
-                texts, schemas, sequences, threshold, include_confidence, include_spans, max_len,
+                texts,
+                schemas,
+                sequences,
+                threshold,
+                include_confidence,
+                include_spans,
+                max_len,
             )
         if runtime == "constrained_classification":
             return self._run_classification(
-                texts, schemas, sequences, include_confidence, max_len,
+                texts,
+                schemas,
+                sequences,
+                include_confidence,
+                max_len,
             )
         if runtime == "joint_ie":
             return self._run_joint(
-                texts, schemas, sequences, include_confidence, include_spans, max_len,
+                texts,
+                schemas,
+                sequences,
+                include_confidence,
+                include_spans,
+                max_len,
             )
         msg = "'runtime' must be classic, constrained_classification, or joint_ie"
         raise ValueError(
@@ -301,7 +317,10 @@ class GLiNER25BoundaryPooler(nn.Module):
             max_len=max_len,
         )
         results = self.task_classifier.batch_classify(
-            texts, parsed, config=config, hidden_states=sequences,
+            texts,
+            parsed,
+            config=config,
+            hidden_states=sequences,
         )
         return [_as_dict(result) for result in results]
 
@@ -323,7 +342,10 @@ class GLiNER25BoundaryPooler(nn.Module):
             max_len=max_len,
         )
         results = self.joint_engine.batch_extract(
-            texts, parsed, config=config, hidden_states=sequences,
+            texts,
+            parsed,
+            config=config,
+            hidden_states=sequences,
         )
         return [_as_dict(result) for result in results]
 

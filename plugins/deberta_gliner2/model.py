@@ -38,9 +38,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Load the custom DeBERTa v2 encoder with Flash DeBERTa Triton kernel
-_ENCODER_PATH = (
-    Path(__file__).resolve().parents[2] / "models" / "deberta_v2" / "deberta_v2_encoder.py"
-)
+_ENCODER_PATH = Path(__file__).resolve().parents[2] / "models" / "deberta_v2" / "deberta_v2_encoder.py"
 
 
 def _import_deberta_v2_encoder():
@@ -75,12 +73,9 @@ class GLiNER2VLLMModel(nn.Module, SupportsLoRA):
     is_pooling_model = True
     supports_lora: ClassVar[bool] = True
     packed_modules_mapping: ClassVar[dict[str, list[str]]] = {
-        f"encoder.{k}": [f"encoder.{n}" for n in v]
-        for k, v in _ENCODER_PACKED_MODULES_MAPPING.items()
+        f"encoder.{k}": [f"encoder.{n}" for n in v] for k, v in _ENCODER_PACKED_MODULES_MAPPING.items()
     }
-    embedding_modules: ClassVar[dict[str, str]] = {
-        f"encoder.{k}": v for k, v in _ENCODER_EMBEDDING_MODULES.items()
-    }
+    embedding_modules: ClassVar[dict[str, str]] = {f"encoder.{k}": v for k, v in _ENCODER_EMBEDDING_MODULES.items()}
 
     def __init__(self, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()

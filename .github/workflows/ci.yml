@@ -10,8 +10,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Build vLLM 0.32 CPU image
-        run: docker build --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.32.0-x86_64 -t vllm-gliner:cpu .
+      - name: Build vLLM 0.33 CPU image
+        run: docker build --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.33.0-x86_64 -t vllm-gliner:cpu .
       - name: Lint, type check, and test (CPU environment)
         run: |
           docker run --rm -v "$PWD:/workspace" -w /workspace --entrypoint /bin/sh vllm-gliner:cpu -ec '
@@ -22,10 +22,11 @@ jobs:
         run: |
           docker run --rm --entrypoint python vllm-gliner:cpu -c '
           import importlib.metadata as m
-          assert m.version("vllm").startswith("0.32.0")
+          assert m.version("vllm").startswith("0.33.0")
           eps = m.entry_points(group="vllm.general_plugins")
           assert {e.name for e in eps if e.dist.name == "vllm-gliner"} == {"deberta_gliner2", "deberta_gliner25"}
           assert {e.name for e in m.entry_points(group="vllm.endpoint_plugins") if e.dist.name == "vllm-gliner"} == {"decide_systemone"}
+          from plugins.deberta_gliner2.decisions import DecideReadStrategy, OpenAIServingDecisions
           from plugins.deberta_gliner2 import register as r2
           from plugins.deberta_gliner25 import register as r25
           r2(); r25()
@@ -49,8 +50,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
-      - name: Build vLLM 0.32 CPU image
-        run: docker build --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.32.0-x86_64 -t vllm-gliner:cpu .
+      - name: Build vLLM 0.33 CPU image
+        run: docker build --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.33.0-x86_64 -t vllm-gliner:cpu .
       - name: CPU inference (${{ matrix.model }})
         run: |
           set -eu
@@ -116,5 +117,5 @@ jobs:
         with:
           context: .
           push: true
-          build-args: VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.32.0-x86_64
+          build-args: VLLM_BASE_IMAGE=vllm/vllm-openai-cpu:v0.33.0-x86_64
           tags: ghcr.io/${{ github.repository_owner }}/vllm-gliner:latest-cpu

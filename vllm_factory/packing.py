@@ -27,7 +27,7 @@ def sequence_lengths(flat_ids: torch.Tensor, positions: torch.Tensor | None) -> 
         batch could not be split and is treated as one sequence.
 
     """
-    total = int(flat_ids.numel())
+    total = flat_ids.numel()
     if positions is None or total == 0:
         return [total]
 
@@ -49,7 +49,9 @@ def sequence_lengths(flat_ids: torch.Tensor, positions: torch.Tensor | None) -> 
 
 
 def pad_batch(
-    flat_ids: torch.Tensor, lengths: list[int], pad_id: int,
+    flat_ids: torch.Tensor,
+    lengths: list[int],
+    pad_id: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Scatter a packed token tensor into one padded row per sequence.
 

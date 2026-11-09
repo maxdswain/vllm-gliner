@@ -143,7 +143,12 @@ class VllmPoolerAdapter(Pooler):
         if self._use_native:
             return self._native.get_supported_tasks()
         supported: tuple[PoolingTask, ...] = (
-            "embed", "classify", "token_embed", "token_classify", "plugin", "embed&token_classify",
+            "embed",
+            "classify",
+            "token_embed",
+            "token_classify",
+            "plugin",
+            "embed&token_classify",
         )
         tasks = self._inner.get_tasks()
         return {task for task in supported if task in tasks}

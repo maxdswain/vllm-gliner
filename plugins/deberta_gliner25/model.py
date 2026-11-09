@@ -38,9 +38,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_ENCODER_PATH = (
-    Path(__file__).resolve().parents[2] / "models" / "deberta_v2" / "deberta_v2_encoder.py"
-)
+_ENCODER_PATH = Path(__file__).resolve().parents[2] / "models" / "deberta_v2" / "deberta_v2_encoder.py"
 
 _HEAD_PREFIXES = (
     "boundary_head.",
@@ -78,12 +76,9 @@ class GLiNER25VLLMModel(nn.Module, SupportsLoRA):
     is_pooling_model = True
     supports_lora: ClassVar[bool] = True
     packed_modules_mapping: ClassVar[dict[str, list[str]]] = {
-        f"encoder.{k}": [f"encoder.{n}" for n in v]
-        for k, v in _ENCODER_PACKED_MODULES_MAPPING.items()
+        f"encoder.{k}": [f"encoder.{n}" for n in v] for k, v in _ENCODER_PACKED_MODULES_MAPPING.items()
     }
-    embedding_modules: ClassVar[dict[str, str]] = {
-        f"encoder.{k}": v for k, v in _ENCODER_EMBEDDING_MODULES.items()
-    }
+    embedding_modules: ClassVar[dict[str, str]] = {f"encoder.{k}": v for k, v in _ENCODER_EMBEDDING_MODULES.items()}
 
     def __init__(self, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
@@ -121,7 +116,9 @@ class GLiNER25VLLMModel(nn.Module, SupportsLoRA):
         from poolers.gliner25 import GLiNER25BoundaryPooler
 
         tokenizer = AutoTokenizer.from_pretrained(
-            vllm_config.model_config.model, use_fast=True, trust_remote_code=True,
+            vllm_config.model_config.model,
+            use_fast=True,
+            trust_remote_code=True,
         )
         extractor_config = ExtractorConfig(
             model_name=vllm_config.model_config.model,
@@ -241,8 +238,7 @@ class GLiNER25VLLMModel(nn.Module, SupportsLoRA):
 
         if not pooler_loaded:
             msg = (
-                "GLiNER25 pooler weights were empty after load_weights. "
-                "Refusing to serve a random-init boundary head."
+                "GLiNER25 pooler weights were empty after load_weights. Refusing to serve a random-init boundary head."
             )
             raise RuntimeError(
                 msg,
@@ -251,8 +247,7 @@ class GLiNER25VLLMModel(nn.Module, SupportsLoRA):
         unexpected = pooler_loaded.keys() - pooler_keys
         if missing or unexpected:
             msg = (
-                "GLiNER25 pooler weight-load mismatch — "
-                f"missing={sorted(missing)!r} unexpected={sorted(unexpected)!r}."
+                f"GLiNER25 pooler weight-load mismatch — missing={sorted(missing)!r} unexpected={sorted(unexpected)!r}."
             )
             raise RuntimeError(
                 msg,

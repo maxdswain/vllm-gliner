@@ -53,7 +53,8 @@ _original_post_process_online = PluginWithIOProcessorPlugins.post_process_online
 
 
 def _post_process_with_usage(
-    self: PluginWithIOProcessorPlugins, ctx: PoolingServeContext[AnyPoolingRequest],
+    self: PluginWithIOProcessorPlugins,
+    ctx: PoolingServeContext[AnyPoolingRequest],
 ) -> None:
     """Add usage only to responses produced by the GLiNER IO processors."""
     if not isinstance(self.io_processor, FactoryIOProcessor):
@@ -151,10 +152,7 @@ class FactoryIOProcessor(IOProcessor[InputT, object], Generic[InputT]):
         self._request_key.set(request_key)
         result = self.factory_pre_process(prompt, request_id)
         # GLiNER processors return TokensPrompt items, not text or embeddings.
-        token_count = sum(
-            len(cast("TokensPrompt", item)["prompt_token_ids"])
-            for item in prompt_to_seq(result)
-        )
+        token_count = sum(len(cast("TokensPrompt", item)["prompt_token_ids"]) for item in prompt_to_seq(result))
         with self._extra_lock:
             self._prompt_tokens[request_key] = token_count
         return result

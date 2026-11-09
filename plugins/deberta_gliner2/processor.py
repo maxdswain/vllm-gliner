@@ -204,7 +204,8 @@ def normalize_classifications_schema(classifications: object) -> list[dict[str, 
             }
         if "cls_threshold" in config:
             config["cls_threshold"] = _validate_threshold(
-                config["cls_threshold"], f"classification '{task}'",
+                config["cls_threshold"],
+                f"classification '{task}'",
             )
         normalized.append(config)
     return normalized
@@ -265,7 +266,8 @@ def normalize_structures_schema(
             name = str(name)
             normalized_fields[name] = ""
             threshold = _validate_threshold(
-                field.get("threshold"), f"structure '{parent}' field '{name}'",
+                field.get("threshold"),
+                f"structure '{parent}' field '{name}'",
             )
             field_meta.append(
                 {
@@ -342,8 +344,7 @@ def build_schema_for_relations(relation_types: list[str]) -> dict:
 def build_schema_for_json(structures: dict[str, list[str]]) -> dict:
     """Build schema dict for JSON structure extraction."""
     legacy = {
-        parent: {"fields": [{"name": field, "dtype": ""} for field in fields]}
-        for parent, fields in structures.items()
+        parent: {"fields": [{"name": field, "dtype": ""} for field in fields]} for parent, fields in structures.items()
     }
     return normalize_gliner2_schema({"structures": legacy})
 
@@ -368,7 +369,12 @@ def build_schema_for_classification(tasks: dict) -> dict:
 
 
 def _transform_schema(
-    parent, fields, child_prefix, prompt=None, label_descriptions=None, example_mode="none",
+    parent,
+    fields,
+    child_prefix,
+    prompt=None,
+    label_descriptions=None,
+    example_mode="none",
 ):
     """Transform a single schema into a token sequence."""
     prompt_str = parent
@@ -418,8 +424,7 @@ def _truncate_text_to_token_budget(
     schema_len = _count_tokenized_length(tokenizer, schema_budget_tokens, tokenization_cache)
     if schema_len >= max_model_len:
         msg = (
-            "GLiNER2 schema is too large for the configured max_model_len; "
-            "reduce schema size or increase max_model_len"
+            "GLiNER2 schema is too large for the configured max_model_len; reduce schema size or increase max_model_len"
         )
         raise ValueError(
             msg,
@@ -473,9 +478,7 @@ def infer_schemas_from_dict(schema: dict) -> dict:
         for parent, fields in item.items():
             field_names = list(fields.keys())
             field_defs = structure_meta.get(parent, [])
-            field_descs = (
-                {fd["name"]: fd.get("description", "") for fd in field_defs} if field_defs else {}
-            )
+            field_descs = {fd["name"]: fd.get("description", "") for fd in field_defs} if field_defs else {}
             mode = "descriptions" if any(field_descs.values()) else "none"
             schemas.append(
                 _transform_schema(
@@ -508,11 +511,7 @@ def infer_schemas_from_dict(schema: dict) -> dict:
 
     relation_fields = [parent for item in schema.get("relations", []) for parent in item]
     if relation_fields:
-        mode = (
-            "descriptions"
-            if any(relation_meta.get(field, "") for field in relation_fields)
-            else "none"
-        )
+        mode = "descriptions" if any(relation_meta.get(field, "") for field in relation_fields) else "none"
         schemas.append(
             _transform_schema(
                 "relations",
@@ -646,18 +645,12 @@ def _build_threshold_meta(meta: dict[str, object]) -> dict[str, object]:
     relations_meta = meta.get("relations", {})
 
     return {
-        "entities": {
-            name: m.get("threshold") if isinstance(m, dict) else None
-            for name, m in entities_meta.items()
-        },
+        "entities": {name: m.get("threshold") if isinstance(m, dict) else None for name, m in entities_meta.items()},
         "json_structures": {
             parent: [f.get("threshold") if isinstance(f, dict) else None for f in fields]
             for parent, fields in structures_meta.items()
         },
-        "relations": {
-            name: m.get("threshold") if isinstance(m, dict) else None
-            for name, m in relations_meta.items()
-        },
+        "relations": {name: m.get("threshold") if isinstance(m, dict) else None for name, m in relations_meta.items()},
     }
 
 
@@ -760,13 +753,9 @@ def decode_output(raw_output, schema: dict, task_types: list[str] | None = None)
 
     classifications = schema.get("classifications", []) if isinstance(schema, dict) else []
     classification_config = {
-        item.get("task"): item
-        for item in classifications
-        if isinstance(item, dict) and item.get("task")
+        item.get("task"): item for item in classifications if isinstance(item, dict) and item.get("task")
     }
-    cls_meta = (
-        schema.get("_meta", {}).get("classifications", {}) if isinstance(schema, dict) else {}
-    )
+    cls_meta = schema.get("_meta", {}).get("classifications", {}) if isinstance(schema, dict) else {}
     for key, value in results.items():
         if not isinstance(value, dict) or value.get("type") != "classification":
             continue
@@ -783,7 +772,9 @@ def decode_output(raw_output, schema: dict, task_types: list[str] | None = None)
 
 
 def _format_entity_record(
-    item: dict[str, object], include_confidence: bool, include_spans: bool,
+    item: dict[str, object],
+    include_confidence: bool,
+    include_spans: bool,
 ) -> object:
     if not isinstance(item, dict):
         return item
@@ -814,10 +805,7 @@ def _strip_nested_metadata(value: object, include_confidence: bool, include_span
                 if "end" in value:
                     record["end"] = value["end"]
             return record if (include_confidence or include_spans) else value["text"]
-        return {
-            key: _strip_nested_metadata(item, include_confidence, include_spans)
-            for key, item in value.items()
-        }
+        return {key: _strip_nested_metadata(item, include_confidence, include_spans) for key, item in value.items()}
     if isinstance(value, list):
         return [_strip_nested_metadata(item, include_confidence, include_spans) for item in value]
     return value
@@ -852,13 +840,10 @@ def format_results(
                 selected = [
                     (label, probs[idx].item())
                     for idx, label in enumerate(labels)
-                    if probs[idx].item()
-                    >= (0.5 if effective_threshold is None else effective_threshold)
+                    if probs[idx].item() >= (0.5 if effective_threshold is None else effective_threshold)
                 ]
                 if include_confidence:
-                    formatted[key] = [
-                        {"label": label, "confidence": score} for label, score in selected
-                    ]
+                    formatted[key] = [{"label": label, "confidence": score} for label, score in selected]
                 else:
                     formatted[key] = [label for label, _ in selected]
             else:

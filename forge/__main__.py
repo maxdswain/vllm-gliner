@@ -37,9 +37,7 @@ def main() -> None:
     try:
         if not args.plugin:
             parser.error("--plugin is required (deberta_gliner2 or deberta_gliner25)")
-        prepare = (
-            prepare_gliner25_model if args.plugin == "deberta_gliner25" else prepare_gliner2_model
-        )
+        prepare = prepare_gliner25_model if args.plugin == "deberta_gliner25" else prepare_gliner2_model
         prepare(hf_model_id=args.model, output_dir=args.output, force=args.force)
     except Exception:
         sys.exit(1)

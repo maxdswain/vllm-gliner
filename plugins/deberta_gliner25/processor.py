@@ -50,20 +50,28 @@ def prompt_schema(runtime: str, schema: dict[str, object]) -> dict[str, object]:
 def _compile_prompt(runtime: str, schema: dict[str, object]) -> dict[str, object]:
     if runtime == "classic":
         schema_mod = require(
-            "gliner2.inference.schema", "gliner2", purpose="GLiNER25 schema parse",
+            "gliner2.inference.schema",
+            "gliner2",
+            purpose="GLiNER25 schema parse",
         )
         return schema_mod.Schema.from_dict(schema).build()
     if runtime == "constrained_classification":
         classification = require(
-            "gliner2.classification", "gliner2", purpose="GLiNER25 classification parse",
+            "gliner2.classification",
+            "gliner2",
+            purpose="GLiNER25 classification parse",
         )
         parsed = classification.ClassificationSchema.from_dict(schema)
         return classification.compile_schema(parsed).build()
     joint_schema = require(
-        "gliner2.joint_ie.schema", "gliner2", purpose="GLiNER25 joint schema parse",
+        "gliner2.joint_ie.schema",
+        "gliner2",
+        purpose="GLiNER25 joint schema parse",
     )
     compiler = require(
-        "gliner2.joint_ie.compiler", "gliner2", purpose="GLiNER25 joint compile",
+        "gliner2.joint_ie.compiler",
+        "gliner2",
+        purpose="GLiNER25 joint compile",
     )
     parsed = joint_schema.JointSchema.from_dict(schema)
     return compiler.compile_schema(parsed).build()
@@ -87,10 +95,13 @@ def boundary_transformer(tokenizer: object, *, token_pooling: str = "first") -> 
 
     """
     processor_mod = require(
-        "gliner2.processor", "gliner2", purpose="GLiNER25 preprocess",
+        "gliner2.processor",
+        "gliner2",
+        purpose="GLiNER25 preprocess",
     )
     return processor_mod.SchemaTransformer(
-        tokenizer=tokenizer, token_pooling=token_pooling,
+        tokenizer=tokenizer,
+        token_pooling=token_pooling,
     )
 
 
@@ -322,7 +333,8 @@ def _tighter_word_cap(batch: object, tokens: int, budget: int) -> int:
 
 
 def decode_boundary_output(
-    raw_output, schema: dict[str, object] | None = None,
+    raw_output,
+    schema: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Unpack the JSON byte tensor produced by the boundary pooler."""
     return decode_output(raw_output, schema or {})

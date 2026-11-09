@@ -39,6 +39,7 @@ from vllm_factory.lora.routing import project_shared_table
 
 try:
     from kernels.flash_deberta_attention import HAS_TRITON, flash_deberta_attention
+
     HAS_FLASH_DEBERTA = HAS_TRITON
 except ImportError:
     HAS_FLASH_DEBERTA = False
@@ -69,9 +70,9 @@ EMBEDDING_MODULES: dict[str, str] = {}
 # Relative Position Utilities (v2: with log-bucket)
 # ============================================================================
 
+
 @torch.jit.script
-def make_log_bucket_position(relative_pos: torch.Tensor, bucket_size: int,
-                             max_position: int) -> torch.Tensor:
+def make_log_bucket_position(relative_pos: torch.Tensor, bucket_size: int, max_position: int) -> torch.Tensor:
     sign = torch.sign(relative_pos)
     mid = bucket_size // 2
     abs_pos = torch.where(
@@ -81,19 +82,20 @@ def make_log_bucket_position(relative_pos: torch.Tensor, bucket_size: int,
     )
     log_pos = (
         torch.ceil(
-            torch.log(abs_pos / mid) /
-            torch.log(torch.tensor((max_position - 1) / mid)) * (mid - 1),
-        ) + mid
+            torch.log(abs_pos / mid) / torch.log(torch.tensor((max_position - 1) / mid)) * (mid - 1),
+        )
+        + mid
     )
     return torch.where(
-        abs_pos <= mid, relative_pos.type_as(log_pos), log_pos * sign,
+        abs_pos <= mid,
+        relative_pos.type_as(log_pos),
+        log_pos * sign,
     )
 
 
-def build_relative_position_v2(query_size: int, key_size: int,
-                                device: torch.device,
-                                bucket_size: int = -1,
-                                max_position: int = -1) -> torch.Tensor:
+def build_relative_position_v2(
+    query_size: int, key_size: int, device: torch.device, bucket_size: int = -1, max_position: int = -1
+) -> torch.Tensor:
     """Build relative position tensor [1, query_size, key_size] with optional log-bucket."""
     q_ids = torch.arange(query_size, dtype=torch.long, device=device)
     k_ids = torch.arange(key_size, dtype=torch.long, device=device)
@@ -105,22 +107,17 @@ def build_relative_position_v2(query_size: int, key_size: int,
 
 
 @torch.jit.script
-def c2p_dynamic_expand(c2p_pos: torch.Tensor, query_layer: torch.Tensor,
-                       relative_pos: torch.Tensor) -> torch.Tensor:
-    return c2p_pos.expand([query_layer.size(0), query_layer.size(1),
-                           query_layer.size(2), relative_pos.size(-1)])
+def c2p_dynamic_expand(c2p_pos: torch.Tensor, query_layer: torch.Tensor, relative_pos: torch.Tensor) -> torch.Tensor:
+    return c2p_pos.expand([query_layer.size(0), query_layer.size(1), query_layer.size(2), relative_pos.size(-1)])
 
 
 @torch.jit.script
-def p2c_dynamic_expand(c2p_pos: torch.Tensor, query_layer: torch.Tensor,
-                       key_layer: torch.Tensor) -> torch.Tensor:
-    return c2p_pos.expand([query_layer.size(0), query_layer.size(1),
-                           key_layer.size(-2), key_layer.size(-2)])
+def p2c_dynamic_expand(c2p_pos: torch.Tensor, query_layer: torch.Tensor, key_layer: torch.Tensor) -> torch.Tensor:
+    return c2p_pos.expand([query_layer.size(0), query_layer.size(1), key_layer.size(-2), key_layer.size(-2)])
 
 
 @torch.jit.script
-def pos_dynamic_expand(pos_index: torch.Tensor, p2c_att: torch.Tensor,
-                       key_layer: torch.Tensor) -> torch.Tensor:
+def pos_dynamic_expand(pos_index: torch.Tensor, p2c_att: torch.Tensor, key_layer: torch.Tensor) -> torch.Tensor:
     return pos_index.expand(p2c_att.size()[:2] + (pos_index.size(-2), key_layer.size(-2)))  # noqa: RUF005 - TorchScript cannot infer a starred tuple
 
 
@@ -132,6 +129,7 @@ def scaled_size_sqrt(query_layer: torch.Tensor, scale_factor: int) -> torch.Tens
 # ============================================================================
 # Disentangled Self-Attention (v2: separate Q/K/V, position_buckets)
 # ============================================================================
+
 
 class DisentangledSelfAttentionV2(nn.Module):
     """DeBERTa v2 disentangled self-attention with vLLM parallel layers.
@@ -157,15 +155,21 @@ class DisentangledSelfAttentionV2(nn.Module):
 
         # DeBERTa v2: separate Q/K/V with bias
         self.query_proj = ColumnParallelLinear(
-            config.hidden_size, self.all_head_size, bias=True,
+            config.hidden_size,
+            self.all_head_size,
+            bias=True,
             prefix=f"{prefix}.query_proj",
         )
         self.key_proj = ColumnParallelLinear(
-            config.hidden_size, self.all_head_size, bias=True,
+            config.hidden_size,
+            self.all_head_size,
+            bias=True,
             prefix=f"{prefix}.key_proj",
         )
         self.value_proj = ColumnParallelLinear(
-            config.hidden_size, self.all_head_size, bias=True,
+            config.hidden_size,
+            self.all_head_size,
+            bias=True,
             prefix=f"{prefix}.value_proj",
         )
 
@@ -187,12 +191,16 @@ class DisentangledSelfAttentionV2(nn.Module):
             if not self.share_att_key:
                 if "c2p" in self.pos_att_type:
                     self.pos_key_proj = ColumnParallelLinear(
-                        config.hidden_size, self.all_head_size, bias=True,
+                        config.hidden_size,
+                        self.all_head_size,
+                        bias=True,
                         prefix=f"{prefix}.pos_key_proj",
                     )
                 if "p2c" in self.pos_att_type:
                     self.pos_query_proj = ColumnParallelLinear(
-                        config.hidden_size, self.all_head_size, bias=True,
+                        config.hidden_size,
+                        self.all_head_size,
+                        bias=True,
                         prefix=f"{prefix}.pos_query_proj",
                     )
 
@@ -254,14 +262,21 @@ class DisentangledSelfAttentionV2(nn.Module):
         # ── Flash DeBERTa path: fused Triton kernel ──────────────
         if self.use_flash_kernel and self.relative_attention and rel_embeddings is not None:
             context_layer = self._flash_forward(
-                query_layer_out, key_layer_out, value_layer_out,
-                attention_mask, rel_embeddings,
+                query_layer_out,
+                key_layer_out,
+                value_layer_out,
+                attention_mask,
+                rel_embeddings,
             )
         else:
             # ── PyTorch fallback path ────────────────────────────
             context_layer = self._pytorch_forward(
-                query_layer_out, key_layer_out, value_layer_out,
-                attention_mask, relative_pos, rel_embeddings,
+                query_layer_out,
+                key_layer_out,
+                value_layer_out,
+                attention_mask,
+                relative_pos,
+                rel_embeddings,
             )
 
         return context_layer
@@ -270,9 +285,9 @@ class DisentangledSelfAttentionV2(nn.Module):
 
     def _flash_forward(
         self,
-        query_layer_out: torch.Tensor,   # (B, L, all_head_size)
-        key_layer_out: torch.Tensor,     # (B, L, all_head_size)
-        value_layer_out: torch.Tensor,   # (B, L, all_head_size)
+        query_layer_out: torch.Tensor,  # (B, L, all_head_size)
+        key_layer_out: torch.Tensor,  # (B, L, all_head_size)
+        value_layer_out: torch.Tensor,  # (B, L, all_head_size)
         attention_mask: torch.Tensor,
         rel_embeddings: torch.Tensor,
     ) -> torch.Tensor:
@@ -310,7 +325,8 @@ class DisentangledSelfAttentionV2(nn.Module):
             pos_query_layer = self._transpose_4d(pos_query_layer_out)
             # NOTE: Do NOT pre-scale — kernel handles scaling via sm_scale
             pos_query = torch.matmul(
-                key_layer, pos_query_layer.transpose(-1, -2).to(dtype=key_layer.dtype),
+                key_layer,
+                pos_query_layer.transpose(-1, -2).to(dtype=key_layer.dtype),
             )
 
         # Build seq_lengths from attention_mask
@@ -320,8 +336,7 @@ class DisentangledSelfAttentionV2(nn.Module):
         elif attention_mask.dim() == 2:
             seq_lengths = attention_mask.sum(dim=-1).int()
         else:
-            seq_lengths = torch.full((query_layer.size(0),), M,
-                                     dtype=torch.int32, device=query_layer.device)
+            seq_lengths = torch.full((query_layer.size(0),), M, dtype=torch.int32, device=query_layer.device)
 
         context_layer = flash_deberta_attention(
             q=query_layer,
@@ -366,27 +381,36 @@ class DisentangledSelfAttentionV2(nn.Module):
 
         scale = scaled_size_sqrt(query_layer, scale_factor)
         attention_scores = torch.bmm(
-            query_layer, key_layer.transpose(-1, -2) / scale.to(dtype=query_layer.dtype),
+            query_layer,
+            key_layer.transpose(-1, -2) / scale.to(dtype=query_layer.dtype),
         )
 
         # Disentangled relative position bias
         if self.relative_attention and rel_embeddings is not None:
             rel_embeddings = self.pos_dropout(rel_embeddings)
             rel_att = self._disentangled_att_bias(
-                query_layer, key_layer, relative_pos, rel_embeddings, scale_factor,
+                query_layer,
+                key_layer,
+                relative_pos,
+                rel_embeddings,
+                scale_factor,
             )
             if rel_att is not None:
                 attention_scores = attention_scores + rel_att
 
         # Reshape for mask application: (B*H, L, L) -> (B, H, L, L)
         attention_scores = attention_scores.view(
-            -1, self.heads_per_partition, attention_scores.size(-2), attention_scores.size(-1),
+            -1,
+            self.heads_per_partition,
+            attention_scores.size(-2),
+            attention_scores.size(-1),
         )
 
         # Apply mask
         attention_mask = attention_mask.bool()
         attention_scores = attention_scores.masked_fill(
-            ~attention_mask, torch.finfo(query_layer.dtype).min,
+            ~attention_mask,
+            torch.finfo(query_layer.dtype).min,
         )
 
         # Softmax + dropout
@@ -418,7 +442,9 @@ class DisentangledSelfAttentionV2(nn.Module):
             q_len = query_layer.size(1)  # bmm layout: (B*H, L, D)
             k_len = key_layer.size(1)
             relative_pos = build_relative_position_v2(
-                q_len, k_len, query_layer.device,
+                q_len,
+                k_len,
+                query_layer.device,
                 bucket_size=self.position_buckets,
                 max_position=self.max_relative_positions,
             )
@@ -440,12 +466,14 @@ class DisentangledSelfAttentionV2(nn.Module):
         if self.share_att_key or "p2c" in self.pos_att_type:
             proj = self.query_proj if self.share_att_key else self.pos_query_proj
             pos_query_layer = self._tile_pos_layer(
-                project_shared_table(proj, rel_embeddings, batch_rows), batch_rows,
+                project_shared_table(proj, rel_embeddings, batch_rows),
+                batch_rows,
             )
         if self.share_att_key or "c2p" in self.pos_att_type:
             proj = self.key_proj if self.share_att_key else self.pos_key_proj
             pos_key_layer = self._tile_pos_layer(
-                project_shared_table(proj, rel_embeddings, batch_rows), batch_rows,
+                project_shared_table(proj, rel_embeddings, batch_rows),
+                batch_rows,
             )
 
         score = 0
@@ -456,7 +484,8 @@ class DisentangledSelfAttentionV2(nn.Module):
             c2p_att = torch.bmm(query_layer, pos_key_layer.transpose(-1, -2))
             c2p_pos = torch.clamp(relative_pos + att_span, 0, att_span * 2 - 1)
             c2p_att = torch.gather(
-                c2p_att, dim=-1,
+                c2p_att,
+                dim=-1,
                 index=c2p_pos.squeeze(0).expand(
                     [query_layer.size(0), query_layer.size(1), relative_pos.size(-1)],
                 ),
@@ -468,7 +497,9 @@ class DisentangledSelfAttentionV2(nn.Module):
             scale = scaled_size_sqrt(pos_query_layer, scale_factor)
             if key_layer.size(1) != query_layer.size(1):
                 r_pos = build_relative_position_v2(
-                    key_layer.size(1), key_layer.size(1), key_layer.device,
+                    key_layer.size(1),
+                    key_layer.size(1),
+                    key_layer.device,
                     bucket_size=self.position_buckets,
                     max_position=self.max_relative_positions,
                 )
@@ -478,7 +509,8 @@ class DisentangledSelfAttentionV2(nn.Module):
             p2c_pos = torch.clamp(-r_pos + att_span, 0, att_span * 2 - 1)
             p2c_att = torch.bmm(key_layer, pos_query_layer.transpose(-1, -2))
             p2c_att = torch.gather(
-                p2c_att, dim=-1,
+                p2c_att,
+                dim=-1,
                 index=p2c_pos.squeeze(0).expand(
                     [query_layer.size(0), key_layer.size(-2), key_layer.size(-2)],
                 ),
@@ -493,11 +525,14 @@ class DisentangledSelfAttentionV2(nn.Module):
 # Self-Output (projection + LayerNorm + residual + dropout)
 # ============================================================================
 
+
 class DebertaV2SelfOutput(nn.Module):
     def __init__(self, config: DebertaV2Config, prefix: str = "") -> None:
         super().__init__()
         self.dense = RowParallelLinear(
-            config.hidden_size, config.hidden_size, bias=True,
+            config.hidden_size,
+            config.hidden_size,
+            bias=True,
             prefix=f"{prefix}.dense",
         )
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
@@ -513,17 +548,19 @@ class DebertaV2SelfOutput(nn.Module):
 # Attention (self-attention + output projection)
 # ============================================================================
 
+
 class DebertaV2Attention(nn.Module):
     def __init__(self, config: DebertaV2Config, prefix: str = "") -> None:
         super().__init__()
         self.self_attn = DisentangledSelfAttentionV2(config, prefix=f"{prefix}.self")
         self.output = DebertaV2SelfOutput(config, prefix=f"{prefix}.output")
 
-    def forward(self, hidden_states, attention_mask,
-                relative_pos=None, rel_embeddings=None):
+    def forward(self, hidden_states, attention_mask, relative_pos=None, rel_embeddings=None):
         self_output = self.self_attn(
-            hidden_states, attention_mask,
-            relative_pos=relative_pos, rel_embeddings=rel_embeddings,
+            hidden_states,
+            attention_mask,
+            relative_pos=relative_pos,
+            rel_embeddings=rel_embeddings,
         )
         return self.output(self_output, hidden_states)
 
@@ -532,11 +569,14 @@ class DebertaV2Attention(nn.Module):
 # MLP (Intermediate + Output)
 # ============================================================================
 
+
 class DebertaV2Intermediate(nn.Module):
     def __init__(self, config: DebertaV2Config, prefix: str = "") -> None:
         super().__init__()
         self.dense = ColumnParallelLinear(
-            config.hidden_size, config.intermediate_size, bias=True,
+            config.hidden_size,
+            config.intermediate_size,
+            bias=True,
             prefix=f"{prefix}.dense",
         )
         if isinstance(config.hidden_act, str):
@@ -553,7 +593,9 @@ class DebertaV2Output(nn.Module):
     def __init__(self, config: DebertaV2Config, prefix: str = "") -> None:
         super().__init__()
         self.dense = RowParallelLinear(
-            config.intermediate_size, config.hidden_size, bias=True,
+            config.intermediate_size,
+            config.hidden_size,
+            bias=True,
             prefix=f"{prefix}.dense",
         )
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
@@ -569,6 +611,7 @@ class DebertaV2Output(nn.Module):
 # ConvLayer (optional, DeBERTa v2 specific)
 # ============================================================================
 
+
 class ConvLayer(nn.Module):
     """Optional convolutional layer in DeBERTa v2 encoder."""
 
@@ -578,18 +621,17 @@ class ConvLayer(nn.Module):
         groups = getattr(config, "conv_groups", 1)
         self.conv_act = getattr(config, "conv_act", "tanh")
         self.conv = nn.Conv1d(
-            config.hidden_size, config.hidden_size, kernel_size,
-            padding=(kernel_size - 1) // 2, groups=groups,
+            config.hidden_size,
+            config.hidden_size,
+            kernel_size,
+            padding=(kernel_size - 1) // 2,
+            groups=groups,
         )
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, residual_states, input_mask):
-        out = (
-            self.conv(hidden_states.permute(0, 2, 1).contiguous())
-            .permute(0, 2, 1)
-            .contiguous()
-        )
+        out = self.conv(hidden_states.permute(0, 2, 1).contiguous()).permute(0, 2, 1).contiguous()
         rmask = (1 - input_mask).bool()
         out.masked_fill_(rmask.unsqueeze(-1).expand(out.size()), 0)
         out = ACT2FN[self.conv_act](self.dropout(out))
@@ -612,6 +654,7 @@ class ConvLayer(nn.Module):
 # Encoder Layer
 # ============================================================================
 
+
 class DebertaV2Layer(nn.Module):
     def __init__(self, config: DebertaV2Config, prefix: str = "") -> None:
         super().__init__()
@@ -619,11 +662,12 @@ class DebertaV2Layer(nn.Module):
         self.intermediate = DebertaV2Intermediate(config, prefix=f"{prefix}.intermediate")
         self.output = DebertaV2Output(config, prefix=f"{prefix}.output")
 
-    def forward(self, hidden_states, attention_mask,
-                relative_pos=None, rel_embeddings=None):
+    def forward(self, hidden_states, attention_mask, relative_pos=None, rel_embeddings=None):
         attention_output = self.attention(
-            hidden_states, attention_mask,
-            relative_pos=relative_pos, rel_embeddings=rel_embeddings,
+            hidden_states,
+            attention_mask,
+            relative_pos=relative_pos,
+            rel_embeddings=rel_embeddings,
         )
         intermediate_output = self.intermediate(attention_output)
         return self.output(intermediate_output, attention_output)
@@ -632,6 +676,7 @@ class DebertaV2Layer(nn.Module):
 # ============================================================================
 # Embeddings
 # ============================================================================
+
 
 class DebertaV2Embeddings(nn.Module):
     """DeBERTa v2 embeddings: word + position + token_type + LayerNorm."""
@@ -642,20 +687,23 @@ class DebertaV2Embeddings(nn.Module):
         self.embedding_size = getattr(config, "embedding_size", config.hidden_size)
 
         self.word_embeddings = VocabParallelEmbedding(
-            config.vocab_size, self.embedding_size,
+            config.vocab_size,
+            self.embedding_size,
         )
 
         self.position_biased_input = getattr(config, "position_biased_input", True)
         if self.position_biased_input:
             self.position_embeddings = nn.Embedding(
-                config.max_position_embeddings, self.embedding_size,
+                config.max_position_embeddings,
+                self.embedding_size,
             )
         else:
             self.position_embeddings = None
 
         if config.type_vocab_size > 0:
             self.token_type_embeddings = nn.Embedding(
-                config.type_vocab_size, self.embedding_size,
+                config.type_vocab_size,
+                self.embedding_size,
             )
         else:
             self.token_type_embeddings = None
@@ -675,8 +723,7 @@ class DebertaV2Embeddings(nn.Module):
             persistent=False,
         )
 
-    def forward(self, input_ids=None, token_type_ids=None, position_ids=None,
-                mask=None, inputs_embeds=None):
+    def forward(self, input_ids=None, token_type_ids=None, position_ids=None, mask=None, inputs_embeds=None):
         input_shape = input_ids.size() if input_ids is not None else inputs_embeds.size()[:-1]
 
         seq_length = input_shape[1]
@@ -686,7 +733,9 @@ class DebertaV2Embeddings(nn.Module):
 
         if token_type_ids is None:
             token_type_ids = torch.zeros(
-                input_shape, dtype=torch.long, device=self.position_ids.device,
+                input_shape,
+                dtype=torch.long,
+                device=self.position_ids.device,
             )
 
         if inputs_embeds is None:
@@ -724,15 +773,15 @@ class DebertaV2Embeddings(nn.Module):
 # Encoder
 # ============================================================================
 
+
 class DebertaV2Encoder(nn.Module):
     """DeBERTa v2 encoder with relative position bias and optional ConvLayer."""
 
     def __init__(self, config: DebertaV2Config, prefix: str = "") -> None:
         super().__init__()
-        self.layer = nn.ModuleList([
-            DebertaV2Layer(config, prefix=f"{prefix}.layer.{i}")
-            for i in range(config.num_hidden_layers)
-        ])
+        self.layer = nn.ModuleList(
+            [DebertaV2Layer(config, prefix=f"{prefix}.layer.{i}") for i in range(config.num_hidden_layers)]
+        )
 
         self.relative_attention = getattr(config, "relative_attention", False)
         if self.relative_attention:
@@ -745,20 +794,15 @@ class DebertaV2Encoder(nn.Module):
                 pos_ebd_size = self.position_buckets * 2
             self.rel_embeddings = nn.Embedding(pos_ebd_size, config.hidden_size)
 
-        self.norm_rel_ebd = [
-            x.strip()
-            for x in getattr(config, "norm_rel_ebd", "none").lower().split("|")
-        ]
+        self.norm_rel_ebd = [x.strip() for x in getattr(config, "norm_rel_ebd", "none").lower().split("|")]
         if "layer_norm" in self.norm_rel_ebd:
             self.LayerNorm = nn.LayerNorm(
-                config.hidden_size, eps=config.layer_norm_eps, elementwise_affine=True,
+                config.hidden_size,
+                eps=config.layer_norm_eps,
+                elementwise_affine=True,
             )
 
-        self.conv = (
-            ConvLayer(config)
-            if getattr(config, "conv_kernel_size", 0) > 0
-            else None
-        )
+        self.conv = ConvLayer(config) if getattr(config, "conv_kernel_size", 0) > 0 else None
 
     def get_rel_embedding(self):
         rel_embeddings = self.rel_embeddings.weight if self.relative_attention else None
@@ -780,7 +824,9 @@ class DebertaV2Encoder(nn.Module):
             position_buckets = getattr(self, "position_buckets", -1)
             max_relative_positions = getattr(self, "max_relative_positions", -1)
             return build_relative_position_v2(
-                q_len, q_len, hidden_states.device,
+                q_len,
+                q_len,
+                hidden_states.device,
                 bucket_size=position_buckets,
                 max_position=max_relative_positions,
             )
@@ -810,7 +856,8 @@ class DebertaV2Encoder(nn.Module):
 
         for i, layer_module in enumerate(self.layer):
             hidden_states = layer_module(
-                hidden_states, attention_mask,
+                hidden_states,
+                attention_mask,
                 relative_pos=relative_pos,
                 rel_embeddings=rel_embeddings,
             )
@@ -825,6 +872,7 @@ class DebertaV2Encoder(nn.Module):
 # ============================================================================
 # Top-Level Model
 # ============================================================================
+
 
 class DebertaV2EncoderModel(nn.Module, SupportsLoRA):
     """DeBERTa v2/v3 encoder model for vLLM — returns hidden states only.
@@ -841,8 +889,7 @@ class DebertaV2EncoderModel(nn.Module, SupportsLoRA):
     packed_modules_mapping: ClassVar[dict[str, list[str]]] = PACKED_MODULES_MAPPING
     embedding_modules: ClassVar[dict[str, str]] = EMBEDDING_MODULES
 
-    def __init__(self, vllm_config: VllmConfig = None, config: DebertaV2Config = None,
-                 prefix: str = "") -> None:
+    def __init__(self, vllm_config: VllmConfig = None, config: DebertaV2Config = None, prefix: str = "") -> None:
         super().__init__()
 
         if vllm_config is not None:
@@ -893,7 +940,9 @@ class DebertaV2EncoderModel(nn.Module, SupportsLoRA):
             input_mask = None  # ConvLayer needs 2D mask
 
         return self.encoder(
-            embedding_output, attention_mask, input_mask=input_mask,
+            embedding_output,
+            attention_mask,
+            input_mask=input_mask,
         )
 
     # ------------------------------------------------------------------

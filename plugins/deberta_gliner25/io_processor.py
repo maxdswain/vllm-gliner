@@ -54,11 +54,14 @@ class DeBERTaGLiNER25IOProcessor(FactoryIOProcessor[GLiNER25Input | list[GLiNER2
         super().__init__(vllm_config, renderer)
         model_id = vllm_config.model_config.model
         self._tokenizer = AutoTokenizer.from_pretrained(
-            model_id, use_fast=True, trust_remote_code=True,
+            model_id,
+            use_fast=True,
+            trust_remote_code=True,
         )
         token_pooling = getattr(vllm_config.model_config.hf_config, "token_pooling", "first")
         self._transformer = boundary_transformer(
-            self._tokenizer, token_pooling=str(token_pooling or "first"),
+            self._tokenizer,
+            token_pooling=str(token_pooling or "first"),
         )
         raw_max = getattr(vllm_config.model_config, "max_model_len", None)
         self._max_model_len = int(raw_max) if raw_max else None
@@ -157,13 +160,16 @@ class DeBERTaGLiNER25IOProcessor(FactoryIOProcessor[GLiNER25Input | list[GLiNER2
             runtime=runtime,
             threshold=threshold,
             include_confidence=self._coerce_bool(
-                data.get("include_confidence", False), "include_confidence",
+                data.get("include_confidence", False),
+                "include_confidence",
             ),
             include_spans=self._coerce_bool(
-                data.get("include_spans", False), "include_spans",
+                data.get("include_spans", False),
+                "include_spans",
             ),
             truncate_overflow_text=self._coerce_bool(
-                data.get("truncate_overflow_text", False), "truncate_overflow_text",
+                data.get("truncate_overflow_text", False),
+                "truncate_overflow_text",
             ),
             adapter=self._coerce_adapter(data.get("adapter")),
         )
@@ -192,7 +198,8 @@ class DeBERTaGLiNER25IOProcessor(FactoryIOProcessor[GLiNER25Input | list[GLiNER2
         return parsed
 
     def _pre_one(
-        self, parsed_input: GLiNER25Input,
+        self,
+        parsed_input: GLiNER25Input,
     ) -> tuple[TokensPrompt, dict[str, object], dict[str, object]]:
         """Collate one parsed request into a prompt, extras and decode meta.
 
@@ -232,9 +239,7 @@ class DeBERTaGLiNER25IOProcessor(FactoryIOProcessor[GLiNER25Input | list[GLiNER2
             msg = "Invalid GLiNER2.5 preprocessor output"
             raise ValueError(msg)
         prompt = TokensPrompt(prompt_token_ids=[int(token_id) for token_id in ids])
-        return prompt, {str(key): value for key, value in extras.items()}, {
-            str(key): value for key, value in postprocess_meta.items()
-        }
+        return prompt, {str(key): value for key, value in extras.items()}, dict(postprocess_meta)
 
     @override
     def factory_pre_process(

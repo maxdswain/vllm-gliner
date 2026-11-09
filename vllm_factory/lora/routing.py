@@ -10,9 +10,7 @@ from torch import nn
 NO_LORA = -1
 
 _WRAPPERS: weakref.WeakKeyDictionary[nn.Module, object] = weakref.WeakKeyDictionary()
-_SCRATCH: weakref.WeakKeyDictionary[object, dict[tuple[object, ...], list[object]]] = (
-    weakref.WeakKeyDictionary()
-)
+_SCRATCH: weakref.WeakKeyDictionary[object, dict[tuple[object, ...], list[object]]] = weakref.WeakKeyDictionary()
 _DEPTH: weakref.WeakKeyDictionary[object, dict[tuple[object, ...], int]] = weakref.WeakKeyDictionary()
 _OBSERVED: list[frozenset[int]] = []
 _CURRENT: "BatchRouting | None" = None
@@ -357,7 +355,8 @@ def _uniform_meta(wrapper: object, slot: int, rows: int, captured: list[int]) ->
     else:
         meta.token_lora_mapping.fill_(slot)
         meta.token_indices_sorted_by_lora_ids.copy_(
-            torch.arange(capacity, dtype=torch.int32), non_blocking=True,
+            torch.arange(capacity, dtype=torch.int32),
+            non_blocking=True,
         )
         meta.active_lora_ids[0] = slot
         meta.num_active_loras_cpu[0] = _num_active(captured, 1)
@@ -455,7 +454,8 @@ def _fill_rows(meta: object, row_slots: Sequence[int], max_loras: int) -> None:
     meta.active_lora_ids[:active].copy_(ids.to(torch.int32), non_blocking=True)
     meta.num_tokens_per_lora[:active].copy_(counts, non_blocking=True)
     meta.lora_token_start_loc[1 : 1 + active].copy_(
-        torch.cumsum(counts, dim=0).to(torch.int32), non_blocking=True,
+        torch.cumsum(counts, dim=0).to(torch.int32),
+        non_blocking=True,
     )
     meta.num_active_loras_cpu[0] = _num_active(meta.captured_lora_counts, active)
 

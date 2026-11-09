@@ -25,6 +25,7 @@ import torch.nn.functional as F
 try:
     import triton
     import triton.language as tl
+
     HAS_TRITON = True
 except ImportError:
     HAS_TRITON = False
@@ -34,8 +35,10 @@ except ImportError:
 # Shared Memory Estimation
 # ==============================================================================
 
-def _calculate_shared_memory(BLOCK_M, BLOCK_N, BLOCK_DMODEL, num_stages, dtype,
-                              has_c2p=False, has_p2c=False, ATT_SPAN=0):
+
+def _calculate_shared_memory(
+    BLOCK_M, BLOCK_N, BLOCK_DMODEL, num_stages, dtype, has_c2p=False, has_p2c=False, ATT_SPAN=0
+):
     """Estimate shared memory usage for the fwd kernel."""
     dtype_size = 2 if dtype in (torch.float16, torch.bfloat16) else 4
 
@@ -60,6 +63,7 @@ def _calculate_shared_memory(BLOCK_M, BLOCK_N, BLOCK_DMODEL, num_stages, dtype,
 # Config Cache
 # ==============================================================================
 
+
 def _cdiv(a, b):
     return (a + b - 1) // b
 
@@ -68,8 +72,12 @@ def _cdiv(a, b):
 def _get_fwd_config(M, N, D, has_disentangled, att_span):
     """Auto-tune kernel block sizes based on GPU capability."""
     # Environment variable overrides
-    env_keys = ["FLASHDEBERTA_FWD_BLOCK_M", "FLASHDEBERTA_FWD_BLOCK_N",
-                "FLASHDEBERTA_FWD_NUM_STAGES", "FLASHDEBERTA_FWD_NUM_WARPS"]
+    env_keys = [
+        "FLASHDEBERTA_FWD_BLOCK_M",
+        "FLASHDEBERTA_FWD_BLOCK_N",
+        "FLASHDEBERTA_FWD_NUM_STAGES",
+        "FLASHDEBERTA_FWD_NUM_WARPS",
+    ]
     if all(k in os.environ for k in env_keys):
         return tuple(int(os.environ[k]) for k in env_keys)
 
@@ -77,8 +85,13 @@ def _get_fwd_config(M, N, D, has_disentangled, att_span):
 
     # Capability-based shared memory limits
     smem_map = {
-        (7, 0): 96000, (7, 2): 96000, (7, 5): 64000,
-        (8, 0): 163000, (8, 6): 99000, (8, 7): 163000, (8, 9): 99000,
+        (7, 0): 96000,
+        (7, 2): 96000,
+        (7, 5): 64000,
+        (8, 0): 163000,
+        (8, 6): 99000,
+        (8, 7): 163000,
+        (8, 9): 99000,
         (9, 0): 227000,
     }
     prop = torch.cuda.get_device_properties(0)
@@ -104,9 +117,16 @@ def _get_fwd_config(M, N, D, has_disentangled, att_span):
     ATT_SPAN = att_span if has_disentangled else 0
 
     # Fit within shared memory
-    smem = _calculate_shared_memory(BLOCK_M, BLOCK_N, D, num_stages, torch.float16,
-                                     has_c2p=has_disentangled, has_p2c=has_disentangled,
-                                     ATT_SPAN=ATT_SPAN)
+    smem = _calculate_shared_memory(
+        BLOCK_M,
+        BLOCK_N,
+        D,
+        num_stages,
+        torch.float16,
+        has_c2p=has_disentangled,
+        has_p2c=has_disentangled,
+        ATT_SPAN=ATT_SPAN,
+    )
     while smem > max_smem and (BLOCK_M > 16 or BLOCK_N > 16 or num_stages > 1):
         if num_stages > 1:
             num_stages -= 1
@@ -121,9 +141,16 @@ def _get_fwd_config(M, N, D, has_disentangled, att_span):
             BLOCK_M //= 2
         elif BLOCK_N > 16:
             BLOCK_N //= 2
-        smem = _calculate_shared_memory(BLOCK_M, BLOCK_N, D, num_stages, torch.float16,
-                                         has_c2p=has_disentangled, has_p2c=has_disentangled,
-                                         ATT_SPAN=ATT_SPAN)
+        smem = _calculate_shared_memory(
+            BLOCK_M,
+            BLOCK_N,
+            D,
+            num_stages,
+            torch.float16,
+            has_c2p=has_disentangled,
+            has_p2c=has_disentangled,
+            ATT_SPAN=ATT_SPAN,
+        )
 
     return BLOCK_M, BLOCK_N, num_stages, num_warps
 
@@ -136,24 +163,56 @@ if HAS_TRITON:
 
     @triton.jit
     def _flash_deberta_fwd_kernel(
-        Q, K, V,
-        K_POS, Q_POS,
-        L, O,  # noqa: E741
+        Q,
+        K,
+        V,
+        K_POS,
+        Q_POS,
+        L,
+        O,  # noqa: E741
         SEQ_LENGTHS,
         sm_scale,
-        stride_qz, stride_qh, stride_qm, stride_qk,
-        stride_kz, stride_kh, stride_kn, stride_kk,
-        stride_vz, stride_vh, stride_vn, stride_vk,
-        stride_oz, stride_oh, stride_om, stride_ok,
-        stride_pk0, stride_pk1, stride_pk2, stride_pk3,
-        stride_pq0, stride_pq1, stride_pq2, stride_pq3,
-        Z, H, M, N, P_SEQ,
-        BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr, BLOCK_N: tl.constexpr,
-        IS_CAUSAL: tl.constexpr, LARGER_M: tl.constexpr,
-        DIVISIBLE_M: tl.constexpr, DIVISIBLE_N: tl.constexpr,
-        HAS_C2P: tl.constexpr, HAS_P2C: tl.constexpr,
+        stride_qz,
+        stride_qh,
+        stride_qm,
+        stride_qk,
+        stride_kz,
+        stride_kh,
+        stride_kn,
+        stride_kk,
+        stride_vz,
+        stride_vh,
+        stride_vn,
+        stride_vk,
+        stride_oz,
+        stride_oh,
+        stride_om,
+        stride_ok,
+        stride_pk0,
+        stride_pk1,
+        stride_pk2,
+        stride_pk3,
+        stride_pq0,
+        stride_pq1,
+        stride_pq2,
+        stride_pq3,
+        Z,
+        H,
+        M,
+        N,
+        P_SEQ,
+        BLOCK_M: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        IS_CAUSAL: tl.constexpr,
+        LARGER_M: tl.constexpr,
+        DIVISIBLE_M: tl.constexpr,
+        DIVISIBLE_N: tl.constexpr,
+        HAS_C2P: tl.constexpr,
+        HAS_P2C: tl.constexpr,
         ATT_SPAN: tl.constexpr,
-        NUM_BUCKETS: tl.constexpr, MAX_DISTANCE: tl.constexpr,
+        NUM_BUCKETS: tl.constexpr,
+        MAX_DISTANCE: tl.constexpr,
         USE_LOG_BUCKET: tl.constexpr,
     ) -> None:
         input_dtype = Q.dtype.element_ty
@@ -226,8 +285,7 @@ if HAS_TRITON:
 
             if USE_LOG_BUCKET:
                 # Log-bucket encoding (DeBERTa v2/v3)
-                sign = tl.where(relative_positions > 0.0, 1.0,
-                                tl.where(relative_positions < 0.0, -1.0, 0.0))
+                sign = tl.where(relative_positions > 0.0, 1.0, tl.where(relative_positions < 0.0, -1.0, 0.0))
                 abs_relative = tl.abs(relative_positions)
                 condition = (relative_positions < mid_val) & (relative_positions > -mid_val)
                 abs_pos = tl.where(condition, mid_val - 1.0, abs_relative)
@@ -240,23 +298,21 @@ if HAS_TRITON:
 
             # ── c2p bias: gather from pos_key ──
             if HAS_C2P:
-                c2p_index = tl.minimum(tl.maximum(bucket_pos + ATT_SPAN, 0),
-                                       2 * ATT_SPAN - 1).to(tl.int32)
+                c2p_index = tl.minimum(tl.maximum(bucket_pos + ATT_SPAN, 0), 2 * ATT_SPAN - 1).to(tl.int32)
                 k_pos_ptrs = K_POS + offs_m[:, None] * stride_pk2 + c2p_index * stride_pk3
-                c2p_bias = tl.load(k_pos_ptrs,
-                                   mask=mask_m[:, None] & (c2p_index < 2 * ATT_SPAN),
-                                   other=0.0, cache_modifier=".cg")
+                c2p_bias = tl.load(
+                    k_pos_ptrs, mask=mask_m[:, None] & (c2p_index < 2 * ATT_SPAN), other=0.0, cache_modifier=".cg"
+                )
                 s += c2p_bias * sm_scale
 
             # ── p2c bias: gather from pos_query ──
             if HAS_P2C:
-                p2c_index = tl.minimum(tl.maximum(bucket_pos + ATT_SPAN, 0),
-                                       2 * ATT_SPAN - 1).to(tl.int32)
+                p2c_index = tl.minimum(tl.maximum(bucket_pos + ATT_SPAN, 0), 2 * ATT_SPAN - 1).to(tl.int32)
                 p2c_index_t = p2c_index.trans(1, 0)
                 q_pos_ptrs = Q_POS + offs_n[:, None] * stride_pq2 + p2c_index_t * stride_pq3
-                p2c_bias_t = tl.load(q_pos_ptrs,
-                                     mask=mask_n[:, None] & (p2c_index_t < 2 * ATT_SPAN),
-                                     other=0.0, cache_modifier=".cg")
+                p2c_bias_t = tl.load(
+                    q_pos_ptrs, mask=mask_n[:, None] & (p2c_index_t < 2 * ATT_SPAN), other=0.0, cache_modifier=".cg"
+                )
                 p2c_bias = p2c_bias_t.trans(1, 0)
                 s += p2c_bias * sm_scale
 
@@ -296,9 +352,10 @@ if HAS_TRITON:
 # Python Wrappers
 # ==============================================================================
 
-def _triton_flash_deberta_fwd(q, k, v, seq_lengths, pos_key, pos_query,
-                               causal, sm_scale, position_buckets,
-                               max_relative_distance, use_log_bucket):
+
+def _triton_flash_deberta_fwd(
+    q, k, v, seq_lengths, pos_key, pos_query, causal, sm_scale, position_buckets, max_relative_distance, use_log_bucket
+):
     """Triton-based forward pass."""
     B, H, M, D = q.shape
     N = k.shape[2]
@@ -316,7 +373,11 @@ def _triton_flash_deberta_fwd(q, k, v, seq_lengths, pos_key, pos_query,
     ATT_SPAN = position_buckets if position_buckets > 0 else max_relative_distance
 
     BLOCK_M, BLOCK_N, num_stages, num_warps = _get_fwd_config(
-        M, N, D, has_c2p or has_p2c, ATT_SPAN,
+        M,
+        N,
+        D,
+        has_c2p or has_p2c,
+        ATT_SPAN,
     )
 
     larger_m = M > N
@@ -333,35 +394,67 @@ def _triton_flash_deberta_fwd(q, k, v, seq_lengths, pos_key, pos_query,
 
     with torch.cuda.device(q.device.index):
         _flash_deberta_fwd_kernel[grid](
-            q, k, v,
-            pos_key, pos_query,
-            L, o,
+            q,
+            k,
+            v,
+            pos_key,
+            pos_query,
+            L,
+            o,
             seq_lengths,
             sm_scale,
-            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-            v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-            stride_pk[0], stride_pk[1], stride_pk[2], stride_pk[3],
-            stride_pq[0], stride_pq[1], stride_pq[2], stride_pq[3],
-            B, H, M, N, P_SEQ,
-            BLOCK_M=BLOCK_M, BLOCK_DMODEL=D, BLOCK_N=BLOCK_N,
-            IS_CAUSAL=causal, LARGER_M=larger_m,
-            DIVISIBLE_M=divisible_m, DIVISIBLE_N=divisible_n,
-            HAS_C2P=has_c2p, HAS_P2C=has_p2c,
+            q.stride(0),
+            q.stride(1),
+            q.stride(2),
+            q.stride(3),
+            k.stride(0),
+            k.stride(1),
+            k.stride(2),
+            k.stride(3),
+            v.stride(0),
+            v.stride(1),
+            v.stride(2),
+            v.stride(3),
+            o.stride(0),
+            o.stride(1),
+            o.stride(2),
+            o.stride(3),
+            stride_pk[0],
+            stride_pk[1],
+            stride_pk[2],
+            stride_pk[3],
+            stride_pq[0],
+            stride_pq[1],
+            stride_pq[2],
+            stride_pq[3],
+            B,
+            H,
+            M,
+            N,
+            P_SEQ,
+            BLOCK_M=BLOCK_M,
+            BLOCK_DMODEL=D,
+            BLOCK_N=BLOCK_N,
+            IS_CAUSAL=causal,
+            LARGER_M=larger_m,
+            DIVISIBLE_M=divisible_m,
+            DIVISIBLE_N=divisible_n,
+            HAS_C2P=has_c2p,
+            HAS_P2C=has_p2c,
             ATT_SPAN=ATT_SPAN,
             NUM_BUCKETS=position_buckets if position_buckets > 0 else max_relative_distance * 2,
             MAX_DISTANCE=max_relative_distance if max_relative_distance > 0 else 512,
             USE_LOG_BUCKET=use_log_bucket,
-            num_warps=num_warps, num_stages=num_stages,
+            num_warps=num_warps,
+            num_stages=num_stages,
         )
 
     return o
 
 
-def _pytorch_flash_deberta_fwd(q, k, v, seq_lengths, pos_key, pos_query,
-                                causal, sm_scale, position_buckets,
-                                max_relative_distance, use_log_bucket):
+def _pytorch_flash_deberta_fwd(
+    q, k, v, seq_lengths, pos_key, pos_query, causal, sm_scale, position_buckets, max_relative_distance, use_log_bucket
+):
     """PyTorch fallback: standard matmul attention with disentangled bias.
 
     Uses the same interface as the Triton kernel for drop-in replacement.
@@ -394,10 +487,11 @@ def _pytorch_flash_deberta_fwd(q, k, v, seq_lengths, pos_key, pos_query,
         )
         log_pos = (
             torch.ceil(
-                torch.log(abs_pos / mid) /
-                torch.log(torch.tensor((max_relative_distance - 1) / mid, device=q.device).float()) *
-                (mid - 1),
-            ) + mid
+                torch.log(abs_pos / mid)
+                / torch.log(torch.tensor((max_relative_distance - 1) / mid, device=q.device).float())
+                * (mid - 1),
+            )
+            + mid
         )
         bucket_pos = torch.where(abs_pos <= mid, relative_pos.float(), log_pos * sign.float())
     else:
@@ -436,6 +530,7 @@ def _pytorch_flash_deberta_fwd(q, k, v, seq_lengths, pos_key, pos_query,
 # ==============================================================================
 # Public API
 # ==============================================================================
+
 
 def flash_deberta_attention(
     q: torch.Tensor,
@@ -486,13 +581,29 @@ def flash_deberta_attention(
     """
     if HAS_TRITON and q.is_cuda:
         return _triton_flash_deberta_fwd(
-            q, k, v, seq_lengths, pos_key, pos_query,
-            causal, sm_scale, position_buckets, max_relative_distance,
+            q,
+            k,
+            v,
+            seq_lengths,
+            pos_key,
+            pos_query,
+            causal,
+            sm_scale,
+            position_buckets,
+            max_relative_distance,
             use_log_bucket,
         )
     return _pytorch_flash_deberta_fwd(
-        q, k, v, seq_lengths, pos_key, pos_query,
-        causal, sm_scale, position_buckets, max_relative_distance,
+        q,
+        k,
+        v,
+        seq_lengths,
+        pos_key,
+        pos_query,
+        causal,
+        sm_scale,
+        position_buckets,
+        max_relative_distance,
         use_log_bucket,
     )
 

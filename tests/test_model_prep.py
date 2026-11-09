@@ -67,6 +67,7 @@ class ModelPrepTests(unittest.TestCase):
             (source / "encoder_config/config.json").write_text(
                 json.dumps({"model_type": "deberta-v2"}),
             )
+
             def download(model_id: str, filename: str) -> str:
                 return str(source / filename)
 
